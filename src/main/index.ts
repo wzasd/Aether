@@ -4,6 +4,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDatabase } from './core/db'
 import { registerIpcHandlers } from './ipc'
 import { safeOpenExternal } from './utils/external'
+import { AIEngine } from './ai/engine'
+import { ClaudeCLIProvider } from './ai/providers/claude-cli'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -46,8 +48,13 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // 初始化 AI 引擎
+  const aiEngine = new AIEngine()
+  const claudeProvider = new ClaudeCLIProvider()
+  aiEngine.registerProvider(claudeProvider)
+
   initDatabase()
-  registerIpcHandlers()
+  registerIpcHandlers(aiEngine)
   createWindow()
 
   app.on('activate', function () {
