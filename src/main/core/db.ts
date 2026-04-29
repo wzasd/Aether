@@ -1,12 +1,16 @@
-import Database from 'better-sqlite3'
+import { createRequire } from 'node:module'
 import { app } from 'electron'
 import { join } from 'path'
+import type Database from 'better-sqlite3'
+
+const require = createRequire(import.meta.url)
+const BetterSqlite3 = require('better-sqlite3')
 
 let db: Database.Database
 
 export function initDatabase(): void {
   const dbPath = join(app.getPath('userData'), 'bytro.db')
-  db = new Database(dbPath)
+  db = new BetterSqlite3(dbPath) as Database.Database
 
   // Performance optimizations
   db.pragma('journal_mode = WAL')
@@ -38,6 +42,7 @@ function createTables(): void {
       id TEXT PRIMARY KEY,
       workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
       title TEXT,
+      title_source TEXT NOT NULL DEFAULT 'auto',
       model TEXT,
       provider TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -134,10 +139,130 @@ function createTables(): void {
       value TEXT
     );
 
+    -- Agent Sessions (runtime session chain)
+    CREATE TABLE IF NOT EXISTS agent_sessions (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      external_session_id TEXT,
+      seq INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      ended_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_sess_conv ON agent_sessions(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_sess_agent ON agent_sessions(agent_id, conversation_id);
+
+    -- Agent Profiles (memory read model / cache)
+    CREATE TABLE IF NOT EXISTS agent_profiles (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT,
+      agent_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_path TEXT,
+      source_hash TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_profile_uniq ON agent_profiles(workspace_id, agent_id);
+
+    -- Memory Candidates (待沉淀知识)
+    CREATE TABLE IF NOT EXISTS memory_candidates (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_conversation_id TEXT,
+      source_message_id TEXT,
+      confidence TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_mem_cand_ws ON memory_candidates(workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_mem_cand_status ON memory_candidates(status);
+
+    -- Project Memory Items (物化后的 read model)
+    CREATE TABLE IF NOT EXISTS project_memory_items (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source_path TEXT,
+      source_hash TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_proj_mem_ws ON project_memory_items(workspace_id);
+
+    -- Conversation Summaries
+    CREATE TABLE IF NOT EXISTS conversation_summaries (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      completed_items TEXT,
+      pending_items TEXT,
+      changed_files TEXT,
+      risks TEXT,
+      next_steps TEXT,
+      from_message_id TEXT,
+      to_message_id TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_conv_sum_conv ON conversation_summaries(conversation_id);
+
+    -- Summary Segments (append-only ledger)
+    CREATE TABLE IF NOT EXISTS summary_segments (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      segment_type TEXT NOT NULL,
+      content TEXT NOT NULL,
+      message_id TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_sum_seg_conv ON summary_segments(conversation_id);
+
+    -- Memory FTS
+    CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+      title,
+      content,
+      kind,
+      content='project_memory_items',
+      content_rowid='rowid'
+    );
+    CREATE TRIGGER IF NOT EXISTS proj_mem_ai AFTER INSERT ON project_memory_items BEGIN
+      INSERT INTO memory_fts(rowid, title, content, kind) VALUES (new.rowid, new.title, new.content, new.kind);
+    END;
+    CREATE TRIGGER IF NOT EXISTS proj_mem_ad AFTER DELETE ON project_memory_items BEGIN
+      INSERT INTO memory_fts(memory_fts, rowid, title, content, kind) VALUES ('delete', old.rowid, old.title, old.content, old.kind);
+    END;
+
     -- Schema Version
     CREATE TABLE IF NOT EXISTS schema_version (
       version INTEGER PRIMARY KEY
     );
-    INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (2);
   `)
+
+  // Add title_source column if it doesn't exist (migration for existing DBs)
+  try {
+    db.exec("ALTER TABLE conversations ADD COLUMN title_source TEXT NOT NULL DEFAULT 'auto'")
+  } catch {
+    // Column already exists — safe to ignore
+  }
+
+  // Migration: v1 → v2 (memory system tables)
+  try {
+    const version = db.prepare('SELECT version FROM schema_version').get() as { version: number } | undefined
+    if (version && version.version < 2) {
+      db.prepare('UPDATE schema_version SET version = 2').run()
+    }
+  } catch {
+    // Safe to ignore
+  }
 }
