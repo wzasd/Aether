@@ -153,6 +153,45 @@ export const useChatStore = create<ChatState>((set, get) => {
     }
   }
 
+  function shouldGenerateSummary(messages: Message[]): boolean {
+    return messages.length > 0 && messages.length % 10 === 0
+  }
+
+  function buildSummaryFromMessages(messages: Message[]): {
+    summary: string
+    completedItems: string[]
+    pendingItems: string[]
+    changedFiles: string[]
+    risks: string[]
+    nextSteps: string[]
+  } {
+    const userMessages = messages.filter((m) => m.role === 'user')
+    const assistantMessages = messages.filter((m) => m.role === 'assistant')
+
+    const summary = `Conversation with ${userMessages.length} user messages and ${assistantMessages.length} assistant responses.`
+
+    const completedItems: string[] = []
+    const pendingItems: string[] = []
+    const changedFiles: string[] = []
+    const risks: string[] = []
+    const nextSteps: string[] = []
+
+    for (const msg of messages) {
+      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
+      const fileMatches = content.match(/[\w/.-]+\.\w{1,10}/g) || []
+      changedFiles.push(...fileMatches.slice(0, 3))
+    }
+
+    return {
+      summary,
+      completedItems,
+      pendingItems,
+      changedFiles: [...new Set(changedFiles)],
+      risks,
+      nextSteps
+    }
+  }
+
   return {
     // 基础状态
     conversations: [],
@@ -670,6 +709,26 @@ export const useChatStore = create<ChatState>((set, get) => {
               )
               if (activeSession) {
                 memoryStore.endAgentSession(activeSession.id)
+              }
+            } catch { /* best-effort */ }
+
+            // Auto-generate conversation summary every 10 messages
+            try {
+              const currentMessages = get().messages
+              if (shouldGenerateSummary(currentMessages)) {
+                const summaryData = buildSummaryFromMessages(currentMessages)
+                const memoryStore = useMemoryStore.getState()
+                memoryStore.createSummary({
+                  conversation_id: conversationId,
+                  summary: summaryData.summary,
+                  completed_items: JSON.stringify(summaryData.completedItems),
+                  pending_items: JSON.stringify(summaryData.pendingItems),
+                  changed_files: JSON.stringify(summaryData.changedFiles),
+                  risks: JSON.stringify(summaryData.risks),
+                  next_steps: JSON.stringify(summaryData.nextSteps),
+                  from_message_id: currentMessages[0]?.id,
+                  to_message_id: currentMessages[currentMessages.length - 1]?.id
+                })
               }
             } catch { /* best-effort */ }
           }
