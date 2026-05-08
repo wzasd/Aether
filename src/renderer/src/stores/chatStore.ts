@@ -1589,7 +1589,9 @@ export const useChatStore = create<ChatState>((set, get) => {
               agent_profile_id: event.agentProfileId
             }).then((message) => {
               appendMessageIfVisible(obsConvId, message as Message)
-            }).catch(() => {})
+            }).catch((err) => {
+              console.error('Failed to create agent observation message:', err)
+            })
           }
           break
         }
