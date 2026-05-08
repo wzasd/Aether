@@ -29,6 +29,8 @@ const roleBadgeClass = (role?: string) => {
       return 'bg-amber-600/15 text-amber-400 border-amber-600/30'
     case 'ui':
       return 'bg-fuchsia-600/15 text-fuchsia-400 border-fuchsia-600/30'
+    case 'assistant':
+      return 'bg-violet-600/15 text-violet-400 border-violet-600/30'
     case 'devops':
       return 'bg-cyan-600/15 text-cyan-400 border-cyan-600/30'
     case 'security':
@@ -38,7 +40,7 @@ const roleBadgeClass = (role?: string) => {
   }
 }
 
-const parseTags = (value: string): string[] => value.split(',').map((s) => s.trim()).filter(Boolean)
+const parseCommaSeparatedTags = (value: string): string[] => value.split(',').map((s) => s.trim()).filter(Boolean)
 
 function SectionTitle({ icon, title, description }: { icon: ReactNode; title: string; description: string }) {
   return (
@@ -104,7 +106,6 @@ export function AgentSettings() {
   const [editProvider, setEditProvider] = useState('')
   const [editModel, setEditModel] = useState('')
   const [editDescription, setEditDescription] = useState('')
-  const [editSystemPrompt, setEditSystemPrompt] = useState('')
   const [editCapabilities, setEditCapabilities] = useState('')
   const [editWhenToUse, setEditWhenToUse] = useState('')
   const [editOutputContract, setEditOutputContract] = useState('')
@@ -132,7 +133,6 @@ export function AgentSettings() {
     setEditProvider(profile.preferredProvider ?? '')
     setEditModel(profile.model ?? '')
     setEditDescription(profile.description ?? '')
-    setEditSystemPrompt(profile.systemPrompt ?? '')
     setEditCapabilities(profile.capabilities?.join(', ') ?? '')
     setEditWhenToUse(profile.whenToUse ?? '')
     setEditOutputContract(profile.outputContract ?? '')
@@ -156,7 +156,7 @@ export function AgentSettings() {
     const arrValue = (prev: string[] | null | undefined, current: string): string[] | null | undefined => {
       const value = current.trim()
       if (prev?.length && !value) return null
-      if (value) return parseTags(value)
+      if (value) return parseCommaSeparatedTags(value)
       return undefined
     }
 
@@ -183,7 +183,7 @@ export function AgentSettings() {
       preferredProvider: newProvider || undefined,
       model: newModel.trim() || undefined,
       description: newDescription.trim() || undefined,
-      capabilities: newCapabilities.trim() ? parseTags(newCapabilities) : undefined,
+      capabilities: newCapabilities.trim() ? parseCommaSeparatedTags(newCapabilities) : undefined,
       whenToUse: newWhenToUse.trim() || undefined,
       outputContract: newOutputContract.trim() || undefined,
       workspaceId: currentWorkspaceId ?? undefined,
@@ -367,7 +367,9 @@ export function AgentSettings() {
 
         {profiles.map((profile) => {
           const providerName = providerNameMap[profile.preferredProvider ?? ''] ?? profile.preferredProvider ?? 'Default'
-          const promptPreview = editingId === profile.id ? editSystemPrompt : profile.systemPrompt ?? ''
+          const promptPreview = editingId === profile.id && editingOriginal
+            ? editingOriginal.systemPrompt ?? ''
+            : profile.systemPrompt ?? ''
 
           return (
             <div key={profile.id} className="border rounded-lg transition-colors border-border bg-secondary/30">

@@ -9,8 +9,10 @@ export const PRESET_PROFILE_IDS = {
   SECURITY_ENGINEER: 'security-engineer',
 } as const
 
+export type PresetProfileId = typeof PRESET_PROFILE_IDS[keyof typeof PRESET_PROFILE_IDS]
+
 const PRESET_PROFILE_ID_SET = new Set<string>(Object.values(PRESET_PROFILE_IDS))
 
-export function isPresetProfileId(id: string): boolean {
+export function isPresetProfileId(id: string): id is PresetProfileId {
   return PRESET_PROFILE_ID_SET.has(id)
 }
