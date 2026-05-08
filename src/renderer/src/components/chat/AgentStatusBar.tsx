@@ -87,10 +87,10 @@ export function AgentStatusBar({ conversationId }: AgentStatusBarProps) {
       <div ref={permRef} className="relative">
         <button
           onClick={() => setPermOpen((v) => !v)}
-          className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors hover:bg-secondary ${
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors ${
             isYolo
-              ? 'bg-red-500/10 text-red-400 border border-red-500/30'
-              : 'text-muted-foreground'
+              ? 'bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 hover:border-red-500/50 focus:outline-none focus:ring-2 focus:ring-red-500/40'
+              : 'text-muted-foreground hover:bg-secondary'
           }`}
         >
           <span className={isYolo ? '' : currentPerm.color}>{currentPerm.label}</span>
@@ -102,6 +102,11 @@ export function AgentStatusBar({ conversationId }: AgentStatusBarProps) {
               <button
                 key={opt.value}
                 onClick={() => {
+                  if (opt.value === 'trusted' && permissionMode !== 'trusted') {
+                    if (!window.confirm(
+                      '切换到 YOLO 模式？\n\nAgent 将自动执行任务，不再逐条确认。'
+                    )) return
+                  }
                   setPermissionMode(opt.value)
                   setPermOpen(false)
                 }}
