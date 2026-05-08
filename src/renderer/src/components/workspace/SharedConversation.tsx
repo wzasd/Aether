@@ -3,35 +3,19 @@ import { createPortal } from 'react-dom'
 import {
   Plus, ChevronDown, ChevronRight,
   FolderOpen, Clock, Check, Settings,
-  PanelRightOpen, Download,
+  PanelRightOpen, Download, Square, Users,
 } from 'lucide-react'
 import { useUIStore } from '../../stores/uiStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentProfileStore } from '../../stores/agentProfileStore'
+import { useSessionConfigStore } from '../../stores/sessionConfigStore'
 import { ConversationExportMenu } from '../ConversationExportMenu'
 
 interface SharedConversationProps {
   children: React.ReactNode
   onOpenSettings?: () => void
   onOpenAgentSettings?: () => void
-}
-
-const AGENT_STATUS_COLORS: Record<string, string> = {
-  idle:      'bg-accent',
-  thinking:  'bg-blue-400',
-  editing:   'bg-yellow-400',
-  reviewing: 'bg-purple-400',
-  waiting:   'bg-orange-400',
-}
-
-const ROLE_COLORS: Record<string, string> = {
-  planning:       'bg-blue-600/20 text-blue-400 border-blue-600/30',
-  implementation: 'bg-green-600/20 text-green-400 border-green-600/30',
-  review:         'bg-orange-600/20 text-orange-400 border-orange-600/30',
-  ui:             'bg-purple-600/20 text-purple-400 border-purple-600/30',
-  assistant:      'bg-cyan-600/20 text-cyan-400 border-cyan-600/30',
-  coder:          'bg-emerald-600/20 text-emerald-400 border-emerald-600/30',
 }
 
 export function SharedConversation({ children, onOpenSettings, onOpenAgentSettings }: SharedConversationProps) {
@@ -46,6 +30,7 @@ export function SharedConversation({ children, onOpenSettings, onOpenAgentSettin
   const currentConversation = useChatStore((s) => s.currentConversation)
 
   const [projectOpen, setProjectOpen] = useState(false)
+  const [memberOpen, setMemberOpen] = useState(false)
   const [exportPos, setExportPos] = useState<{ x: number; y: number } | null>(null)
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
   const projectBtnRef = useRef<HTMLButtonElement>(null)
@@ -122,19 +107,28 @@ export function SharedConversation({ children, onOpenSettings, onOpenAgentSettin
 
         <div className="flex-1" />
 
-        {currentConversation && (
-          <button
-            ref={exportBtnRef}
-            title="导出对话"
-            onClick={(e) => {
-              const rect = (e.target as HTMLElement).closest('button')?.getBoundingClientRect()
-              setExportPos({ x: rect?.left ?? e.clientX, y: (rect?.bottom ?? e.clientY) + 4 })
-            }}
-            className="titlebar-no-drag relative z-40 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-card transition-colors shrink-0"
-          >
-            <Download size={13} />
-          </button>
-        )}
+        {/* Stop all agents */}
+        <button
+          title="停止所有 Agent"
+          onClick={() => {
+            if (window.confirm('确定要停止所有 Agent 吗？正在执行的任务将中断。')) {
+              useChatStore.getState().closeOpenFloor(currentConversation?.id ?? '')
+            }
+          }}
+          className="titlebar-no-drag relative z-40 p-1 rounded text-muted-foreground hover:text-red-400 hover:bg-card transition-colors shrink-0"
+        >
+          <Square size={13} />
+        </button>
+
+        {/* Member count */}
+        <button
+          title="查看成员"
+          onClick={() => setMemberOpen((v) => !v)}
+          className="titlebar-no-drag relative z-40 flex items-center gap-1 px-1.5 py-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-card transition-colors shrink-0 text-xs"
+        >
+          <Users size={13} />
+          <span>{enabledAgents.length}</span>
+        </button>
 
         {projectOpen && createPortal(
           <div ref={dropdownRef} className="fixed z-50 w-72 bg-card border border-border rounded shadow-xl" style={{ top: dropdownPos.top, left: dropdownPos.left }}>
@@ -188,14 +182,6 @@ export function SharedConversation({ children, onOpenSettings, onOpenAgentSettin
           document.body
         )}
 
-        <button
-          onClick={onOpenSettings}
-          title="设置"
-          className="titlebar-no-drag relative z-40 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-card transition-colors shrink-0"
-        >
-          <Settings size={13} />
-        </button>
-
         {workspaceCollapsed && (
           <button
             onClick={() => setWorkspaceCollapsed(false)}
@@ -209,44 +195,59 @@ export function SharedConversation({ children, onOpenSettings, onOpenAgentSettin
       </div>
 
       {/* ── Active Agent Quick View ─────────────────────────────── */}
-      <div className="px-3 py-2 border-b border-border bg-secondary/20">
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">活跃 Agent</span>
-          {onOpenAgentSettings && (
-            <button
-              onClick={onOpenAgentSettings}
-              className="text-[10px] text-muted-foreground hover:text-foreground transition-colors underline"
-            >
-              管理
-            </button>
+      <div className="px-3 py-1.5 border-b border-border bg-secondary/20 relative">
+        <div className="text-xs text-muted-foreground truncate">
+          {enabledAgents.length === 0 ? (
+            <span>未配置 Agent</span>
+          ) : (
+            <span>{enabledAgents.map((agent) => `@${agent.name}`).join(' ')}</span>
           )}
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {enabledAgents.length === 0 && (
-            <span className="text-xs text-muted-foreground">未配置 Agent</span>
-          )}
-          {enabledAgents.map((agent) => (
-            <button
-              key={agent.id}
-              onClick={() => onOpenAgentSettings?.()}
-              title={`配置 ${agent.name}`}
-              className="px-2.5 py-1 rounded flex items-center gap-1.5 text-xs bg-card border border-border text-foreground hover:bg-secondary hover:border-accent/30 transition-colors cursor-pointer"
-            >
-              <div className={`w-1.5 h-1.5 rounded-full ${AGENT_STATUS_COLORS.idle}`} />
-              <span className="font-medium">{agent.name}</span>
-              {agent.role && (
-                <span className={`text-[10px] px-1 py-0 rounded border ${ROLE_COLORS[agent.role] ?? 'bg-accent/20 text-muted-foreground border-border/30'}`}>
-                  {agent.role}
+
+        {/* Member popup */}
+        {memberOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setMemberOpen(false)} />
+            <div className="absolute left-3 top-full mt-1 z-50 w-56 bg-card border border-border rounded-lg shadow-xl">
+              <div className="px-3 py-2 border-b border-border">
+                <span className="text-xs text-foreground font-medium">
+                  {activeWorkspace?.name ?? 'Dev Team'} ({enabledAgents.length})
                 </span>
+              </div>
+              <div className="max-h-60 overflow-y-auto thin-scrollbar">
+                {enabledAgents.map((agent) => (
+                  <button
+                    key={agent.id}
+                    onClick={() => {
+                      onOpenAgentSettings?.()
+                      setMemberOpen(false)
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-secondary transition-colors flex items-center gap-2 text-xs"
+                  >
+                    <span className="text-[10px] text-muted-foreground">🤖</span>
+                    <span className="text-foreground font-medium">@{agent.name}</span>
+                    {agent.role && (
+                      <span className="text-[10px] text-muted-foreground ml-auto">{agent.role}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              {onOpenAgentSettings && (
+                <div className="border-t border-border px-3 py-1.5">
+                  <button
+                    onClick={() => {
+                      onOpenAgentSettings()
+                      setMemberOpen(false)
+                    }}
+                    className="text-[10px] text-muted-foreground hover:text-foreground transition-colors underline w-full text-center"
+                  >
+                    管理 Agent
+                  </button>
+                </div>
               )}
-              {agent.capabilities && agent.capabilities.length > 0 && (
-                <span className="text-[10px] text-muted-foreground hidden sm:inline">
-                  {agent.capabilities.slice(0, 2).join(' · ')}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* ── Conversation thread ───────────────────────────────────── */}

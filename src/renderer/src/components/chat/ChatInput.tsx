@@ -3,26 +3,8 @@ import { Send, Paperclip, Cpu } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useMemoryStore } from '../../stores/memoryStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
-import { useSessionConfigStore } from '../../stores/sessionConfigStore'
 import { useAgentProfileStore } from '../../stores/agentProfileStore'
-import { ModelSelector } from '../ModelSelector'
-import { ConfigOptions } from '../ConfigOptions'
 import { AgentStatusBar } from './AgentStatusBar'
-
-const MODES = ['build', 'plan', 'review', 'ask'] as const
-type ChatMode = (typeof MODES)[number]
-
-type PermissionMode = 'manual' | 'autoEdit' | 'plan' | 'fullAuto' | 'trusted'
-
-function modeToPermission(mode: ChatMode): PermissionMode {
-  if (mode === 'build') return 'autoEdit'
-  return 'plan'
-}
-
-function permissionToMode(permissionMode: PermissionMode): ChatMode {
-  if (permissionMode === 'autoEdit' || permissionMode === 'fullAuto') return 'build'
-  return 'plan'
-}
 
 interface MentionSuggestion {
   id: string
@@ -57,21 +39,10 @@ export function ChatInput({ conversationId }: { conversationId: string }) {
   const abortStream = useChatStore((s) => s.abortStream)
   const isOptimisticStreaming = useChatStore((s) => s.isOptimisticStreaming)
   const streamingRequestId = useChatStore((s) => s.streamingRequestId)
-  const setPermissionMode = useSessionConfigStore((s) => s.setPermissionMode)
-  const permissionMode = useSessionConfigStore((s) => s.permissionMode)
-  const providerType = useSessionConfigStore((s) => s.providerType)
-  const executionMode = useSessionConfigStore((s) => s.executionMode)
-  const setExecutionMode = useSessionConfigStore((s) => s.setExecutionMode)
-  const activeSessionId = useChatStore(
-    (s) => s.activeSessionMap[`${conversationId}:${providerType}`] ?? undefined
-  )
   const collaborationMode = useChatStore((s) => s.pendingCollaborationMode[conversationId])
   const openFloorState = useChatStore((s) => s.openFloorStates[conversationId])
   const isOpenFloor = openFloorState?.status === 'active'
 
-  const [mode, setMode] = useState<ChatMode>(
-    permissionToMode(permissionMode)
-  )
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Agent profiles for @mention
@@ -85,15 +56,6 @@ export function ChatInput({ conversationId }: { conversationId: string }) {
       textareaRef.current.focus()
     }
   }, [conversationId])
-
-  useEffect(() => {
-    setMode(permissionToMode(permissionMode))
-  }, [permissionMode])
-
-  const handleModeChange = (m: ChatMode) => {
-    setMode(m)
-    setPermissionMode(modeToPermission(m))
-  }
 
   // @mention autocomplete logic
   const filteredSuggestions: MentionSuggestion[] = mentionQuery !== null
@@ -245,31 +207,6 @@ export function ChatInput({ conversationId }: { conversationId: string }) {
 
       {/* Unified Agent Status Bar */}
       <AgentStatusBar conversationId={conversationId} />
-
-      {/* Mode selector row */}
-      <div className="flex items-center gap-2 mb-2">
-        <div className="flex gap-1">
-          {MODES.map((m) => (
-            <button
-              key={m}
-              onClick={() => handleModeChange(m)}
-              className={`px-2 py-1 rounded text-xs transition-colors ${
-                mode === m
-                  ? 'bg-blue-600 text-white'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {m.charAt(0).toUpperCase() + m.slice(1)}
-            </button>
-          ))}
-        </div>
-
-        {/* Provider + Model selector */}
-        <ModelSelector activeSessionId={activeSessionId} />
-
-        {/* Live agent config options (ACP session_config_option_update) */}
-        {activeSessionId && <ConfigOptions activeSessionId={activeSessionId} />}
-      </div>
 
       {/* Input row */}
       <div className="flex items-end gap-2">

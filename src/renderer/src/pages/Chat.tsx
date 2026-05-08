@@ -4,7 +4,6 @@ import { ChevronDown, ChevronRight, FileCode } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import { useChangeStore, type FileChange } from '../stores/changeStore'
 import { useUIStore } from '../stores/uiStore'
-import { useProviderStore } from '../stores/providerStore'
 import { MessageList } from '../components/chat/MessageList'
 import { ChatInput } from '../components/chat/ChatInput'
 import { SubagentStatus } from '../components/SubagentStatus'
@@ -27,11 +26,6 @@ export function ChatPage() {
   const isCommittedRef = useRef(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isUserScrollingRef = useRef(false)
-  const [overrideProvider, setOverrideProvider] = useState('')
-  const [overrideModel, setOverrideModel] = useState('')
-  const [showAdvanced, setShowAdvanced] = useState(false)
-
-  const providers = useProviderStore((s) => s.providers)
 
   const taskRailCollapsed = useUIStore((s) => s.taskRailCollapsed)
   const workspaceCollapsed = useUIStore((s) => s.workspaceCollapsed)
@@ -87,8 +81,6 @@ export function ChatPage() {
     )
   }
 
-  const selectedProvider = providers.find((p) => p.meta.id === overrideProvider)
-
   return (
     <div className="h-full flex flex-col min-h-0">
       {/* Messages */}
@@ -98,44 +90,6 @@ export function ChatPage() {
         className="thin-scrollbar flex-1 min-h-0 overflow-y-auto px-3 py-4"
       >
         <div className={`mx-auto w-full ${bothCollapsed ? 'max-w-3xl' : 'max-w-[50vw]'}`}>
-          {/* Runtime override — always available when providers exist */}
-          {providers.length > 0 && (
-            <div className="pb-4">
-              <button
-                onClick={() => setShowAdvanced((v) => !v)}
-                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <ChevronDown size={10} className={`transition-transform ${showAdvanced ? '' : '-rotate-90'}`} />
-                Runtime 覆盖
-              </button>
-              {showAdvanced && (
-                <div className="mt-2 flex gap-2">
-                  <select
-                    value={overrideProvider}
-                    onChange={(e) => { setOverrideProvider(e.target.value); setOverrideModel('') }}
-                    className="text-xs rounded-md border border-border bg-card px-2 py-1.5 text-foreground"
-                  >
-                    <option value="">默认 Provider</option>
-                    {providers.map((p) => (
-                      <option key={p.meta.id} value={p.meta.id}>{p.meta.name}</option>
-                    ))}
-                  </select>
-                  {selectedProvider && (
-                    <select
-                      value={overrideModel}
-                      onChange={(e) => setOverrideModel(e.target.value)}
-                      className="text-xs rounded-md border border-border bg-card px-2 py-1.5 text-foreground"
-                    >
-                      <option value="">默认 Model</option>
-                      {selectedProvider.meta.models.map((m) => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
           <MessageList messages={messages} />
         </div>
       </div>
