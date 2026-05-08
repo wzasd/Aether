@@ -1,18 +1,15 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
-import { ChevronDown, ChevronRight, FileCode, User, Users, MessageSquare, Search, Hammer, ShieldCheck, Zap } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileCode } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import { useChangeStore, type FileChange } from '../stores/changeStore'
 import { useUIStore } from '../stores/uiStore'
-import { useAgentProfileStore } from '../stores/agentProfileStore'
 import { useProviderStore } from '../stores/providerStore'
 import { MessageList } from '../components/chat/MessageList'
 import { ChatInput } from '../components/chat/ChatInput'
 import { SubagentStatus } from '../components/SubagentStatus'
 import { UsageBar } from '../components/UsageBar'
 import { TaskGraph } from '../components/workspace/TaskGraph'
-import { PickerItem } from '../components/PickerItem'
-import { TeamTopology } from '../components/workspace/TeamTopology'
 
 export function ChatPage() {
   const { id } = useParams<{ id: string }>()
@@ -24,25 +21,16 @@ export function ChatPage() {
   const isOptimisticStreaming = useChatStore((s) => s.isOptimisticStreaming)
   const loading = useChatStore((s) => s.loading)
   const deleteConversation = useChatStore((s) => s.deleteConversation)
-  const updateCurrentConversation = useChatStore((s) => s.updateCurrentConversation)
   // Track whether this component has truly mounted (not a StrictMode synthetic mount).
   // useLayoutEffect only fires on real mounts, so this ref stays false during dev-only
   // double-invoke and is only set to true when the component is actually committed to the DOM.
   const isCommittedRef = useRef(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isUserScrollingRef = useRef(false)
-  const [selectedMode, setSelectedMode] = useState<'solo' | 'team'>('solo')
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('default')
-  const [selectedTeamId, setSelectedTeamId] = useState<string>('dev-team')
-  const [collaborationMode, setCollaborationMode] = useState<'direct' | 'explore' | 'build' | 'review'>('direct')
   const [overrideProvider, setOverrideProvider] = useState('')
   const [overrideModel, setOverrideModel] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [initialMentions, setInitialMentions] = useState('')
-  const [teams, setTeams] = useState<Array<{ id: string; name: string; members?: Array<{ profileId: string }>; policies?: Record<string, unknown> }>>([])
 
-  const profiles = useAgentProfileStore((s) => s.profiles)
-  const { activeProfileId, setActiveProfile } = useAgentProfileStore()
   const providers = useProviderStore((s) => s.providers)
 
   const taskRailCollapsed = useUIStore((s) => s.taskRailCollapsed)
@@ -74,24 +62,6 @@ export function ChatPage() {
     }
   }, [id, loadConversation])
 
-  // Clean up orphan drafts when navigating away without sending
-  useEffect(() => {
-    return () => {
-      // isCommittedRef is false during StrictMode's synthetic cleanup — only
-      // delete when this is a real unmount from a real navigation event.
-      if (!isCommittedRef.current) return
-      if (hasSentRef.current) return
-      const conv = useChatStore.getState().currentConversation
-      if (conv?.is_draft && conv.id === id) {
-        deleteConversation(conv.id).catch(() => {})
-      }
-    }
-  }, [id, deleteConversation])
-
-  // Once the conversation has messages, the draft was promoted — no cleanup needed
-  useEffect(() => {
-    if (messages.length > 0) hasSentRef.current = true
-  }, [messages.length])
 
   useEffect(() => {
     const el = scrollContainerRef.current
@@ -100,14 +70,6 @@ export function ChatPage() {
       el.scrollTop = el.scrollHeight
     }
   }, [messages, streamingText, isStreaming])
-
-  const showModeSelector = Boolean(currentConversation?.is_draft)
-
-  useEffect(() => {
-    if (showModeSelector) {
-      window.api.team.list().then(setTeams).catch(() => setTeams([]))
-    }
-  }, [showModeSelector])
 
   if (loading && !currentConversation) {
     return (
@@ -125,42 +87,7 @@ export function ChatPage() {
     )
   }
 
-  const handleSelectMode = async (mode: 'solo' | 'team') => {
-    setSelectedMode(mode)
-    if (!id) return
-    const teamId = mode === 'team' ? selectedTeamId : null
-    await window.api.conversation.update(id, { team_id: teamId })
-    updateCurrentConversation(id, { team_id: teamId })
-  }
-
-  const handleSelectAgent = async (agentId: string) => {
-    setSelectedAgentId(agentId)
-    if (agentId === 'default') {
-      setActiveProfile(null)
-    } else {
-      setActiveProfile(agentId)
-    }
-  }
-
-  const handleSelectTeam = async (teamId: string) => {
-    setSelectedTeamId(teamId)
-    if (!id) return
-    await window.api.conversation.update(id, { team_id: teamId })
-    updateCurrentConversation(id, { team_id: teamId })
-  }
-
-  const enabledProfiles = profiles.filter((p) => p.isEnabled)
   const selectedProvider = providers.find((p) => p.meta.id === overrideProvider)
-  const selectedTeam = teams.find((t) => t.id === selectedTeamId)
-
-  const ROLE_EMOJI: Record<string, string> = { planning: '🧠', implementation: '🔧', review: '🔍', ui: '🎨' }
-
-  const collaborationOptions: Array<{ id: typeof collaborationMode; label: string; icon: typeof MessageSquare; desc: string }> = [
-    { id: 'direct', label: 'Direct', icon: MessageSquare, desc: '单 Agent 或按显式 @ 调度' },
-    { id: 'explore', label: 'Explore', icon: Search, desc: '只读发散，倾向并行' },
-    { id: 'build', label: 'Build', icon: Hammer, desc: '实现任务，遵守 Team policy' },
-    { id: 'review', label: 'Review', icon: ShieldCheck, desc: '审查优先，手动权限' }
-  ]
 
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -171,167 +98,42 @@ export function ChatPage() {
         className="thin-scrollbar flex-1 min-h-0 overflow-y-auto px-3 py-4"
       >
         <div className={`mx-auto w-full ${bothCollapsed ? 'max-w-3xl' : 'max-w-[50vw]'}`}>
-          {showModeSelector && (
-            <div className="space-y-4 pb-4">
-              {/* Mode selector */}
-              <div>
-                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2 block">Mode</label>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleSelectMode('solo')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${
-                      selectedMode === 'solo'
-                        ? 'border-blue-500/40 bg-blue-500/5'
-                        : 'border-border hover:bg-accent/50'
-                    }`}
+          {/* Runtime override — always available when providers exist */}
+          {providers.length > 0 && (
+            <div className="pb-4">
+              <button
+                onClick={() => setShowAdvanced((v) => !v)}
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ChevronDown size={10} className={`transition-transform ${showAdvanced ? '' : '-rotate-90'}`} />
+                Runtime 覆盖
+              </button>
+              {showAdvanced && (
+                <div className="mt-2 flex gap-2">
+                  <select
+                    value={overrideProvider}
+                    onChange={(e) => { setOverrideProvider(e.target.value); setOverrideModel('') }}
+                    className="text-xs rounded-md border border-border bg-card px-2 py-1.5 text-foreground"
                   >
-                    <User size={14} className={selectedMode === 'solo' ? 'text-blue-400' : 'text-muted-foreground'} />
-                    <span className={`text-xs font-medium ${selectedMode === 'solo' ? 'text-foreground' : 'text-muted-foreground'}`}>Solo Agent</span>
-                  </button>
-                  <button
-                    onClick={() => handleSelectMode('team')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${
-                      selectedMode === 'team'
-                        ? 'border-amber-500/40 bg-amber-500/5'
-                        : 'border-border hover:bg-accent/50'
-                    }`}
-                  >
-                    <Users size={14} className={selectedMode === 'team' ? 'text-amber-400' : 'text-muted-foreground'} />
-                    <span className={`text-xs font-medium ${selectedMode === 'team' ? 'text-foreground' : 'text-muted-foreground'}`}>Team</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Agent picker — Solo mode */}
-              {selectedMode === 'solo' && (
-                <div>
-                  <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2 block">Agent</label>
-                  <div className="flex gap-2.5 overflow-x-auto pb-1">
-                    <PickerItem
-                      icon="🤖"
-                      name="Default"
-                      subtitle="使用当前会话配置"
-                      selected={selectedAgentId === 'default'}
-                      variant="agent"
-                      onClick={() => handleSelectAgent('default')}
-                    />
-                    {enabledProfiles.map((profile) => {
-                      const providerName = profile.preferredProvider
-                        ? (providers.find((p) => p.meta.id === profile.preferredProvider)?.meta.name ?? profile.preferredProvider)
-                        : 'Default'
-                      return (
-                        <PickerItem
-                          key={profile.id}
-                          icon={ROLE_EMOJI[profile.role] ?? '🤖'}
-                          name={profile.name}
-                          subtitle={providerName}
-                          selected={selectedAgentId === profile.id}
-                          variant="agent"
-                          onClick={() => handleSelectAgent(profile.id)}
-                        />
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Team picker — Team mode */}
-              {selectedMode === 'team' && (
-                <div>
-                  <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2 block">Team</label>
-                  <div className="flex gap-2.5 overflow-x-auto pb-1">
-                    {teams.map((t) => (
-                      <PickerItem
-                        key={t.id}
-                        icon="👥"
-                        name={t.name}
-                        subtitle={`${t.members?.length ?? 0} members`}
-                        selected={t.id === selectedTeamId}
-                        variant="team"
-                        onClick={() => handleSelectTeam(t.id)}
-                      />
+                    <option value="">默认 Provider</option>
+                    {providers.map((p) => (
+                      <option key={p.meta.id} value={p.meta.id}>{p.meta.name}</option>
                     ))}
-                  </div>
-
-                  {selectedTeam && (
-                    <div className="mt-3 p-3 rounded-lg bg-accent/20 border border-border">
-                      <TeamTopology
-                        name={selectedTeam.name}
-                        members={(selectedTeam.members ?? []).map((m) => ({ profileId: m.profileId }))}
-                        profiles={profiles}
-                        policies={selectedTeam.policies}
-                      />
-                    </div>
+                  </select>
+                  {selectedProvider && (
+                    <select
+                      value={overrideModel}
+                      onChange={(e) => setOverrideModel(e.target.value)}
+                      className="text-xs rounded-md border border-border bg-card px-2 py-1.5 text-foreground"
+                    >
+                      <option value="">默认 Model</option>
+                      {selectedProvider.meta.models.map((m) => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
                   )}
                 </div>
               )}
-
-              {/* Collaboration mode */}
-              <div>
-                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2 block">协作模式</label>
-                <div className="flex gap-1.5">
-                  {collaborationOptions.map((option) => {
-                    const Icon = option.icon
-                    return (
-                      <button
-                        key={option.id}
-                        onClick={() => setCollaborationMode(option.id)}
-                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md border transition-colors ${
-                          collaborationMode === option.id
-                            ? 'border-primary bg-primary/5 text-foreground'
-                            : 'border-border text-muted-foreground hover:bg-accent/50'
-                        }`}
-                      >
-                        <Icon size={11} />
-                        <span className="text-[11px] font-medium">{option.label}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Runtime override */}
-              {providers.length > 0 && (
-                <div>
-                  <button
-                    onClick={() => setShowAdvanced((v) => !v)}
-                    className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <ChevronDown size={10} className={`transition-transform ${showAdvanced ? '' : '-rotate-90'}`} />
-                    Runtime 覆盖
-                  </button>
-                  {showAdvanced && (
-                    <div className="mt-2 flex gap-2">
-                      <select
-                        value={overrideProvider}
-                        onChange={(e) => { setOverrideProvider(e.target.value); setOverrideModel('') }}
-                        className="text-xs rounded-md border border-border bg-card px-2 py-1.5 text-foreground"
-                      >
-                        <option value="">默认 Provider</option>
-                        {providers.map((p) => (
-                          <option key={p.meta.id} value={p.meta.id}>{p.meta.name}</option>
-                        ))}
-                      </select>
-                      {selectedProvider && (
-                        <select
-                          value={overrideModel}
-                          onChange={(e) => setOverrideModel(e.target.value)}
-                          className="text-xs rounded-md border border-border bg-card px-2 py-1.5 text-foreground"
-                        >
-                          <option value="">默认 Model</option>
-                          {selectedProvider.meta.models.map((m) => (
-                            <option key={m.id} value={m.id}>{m.name}</option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <p className="text-[10px] text-muted-foreground text-center">
-                选择配置后在下方输入消息即可开始
-              </p>
             </div>
           )}
           <MessageList messages={messages} />

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type PermissionMode = 'manual' | 'autoEdit' | 'plan' | 'fullAuto'
+type PermissionMode = 'manual' | 'autoEdit' | 'plan' | 'fullAuto' | 'trusted'
 export type ExecutionMode = 'serial' | 'parallel'
 
 const STORAGE_KEY = 'bytro-session-config'

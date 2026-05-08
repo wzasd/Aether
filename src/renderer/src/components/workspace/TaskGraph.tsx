@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { GitBranch, Loader, CheckCircle, XCircle, Clock, User, MessageSquare, ChevronDown, Filter } from 'lucide-react'
+import { GitBranch, Loader, CheckCircle, XCircle, Clock, User, MessageSquare, ChevronDown, Filter, Brain, StopCircle } from 'lucide-react'
 import { useAgentProfileStore } from '../../stores/agentProfileStore'
 import { useA2AStore } from '../../stores/a2aStore'
+import { useChatStore } from '../../stores/chatStore'
 
 interface GraphNode {
   id: string
@@ -56,6 +57,8 @@ export function TaskGraph({ conversationId }: { conversationId: string | null })
   const [prevStatuses, setPrevStatuses] = useState<Record<string, string>>({})
   const profiles = useAgentProfileStore((s) => s.profiles)
   const getQueuePosition = useA2AStore((s) => s.getQueuePosition)
+  const openFloorState = useChatStore((s) => (conversationId ? s.openFloorStates[conversationId] : undefined))
+  const isOpenFloorActive = openFloorState?.status === 'active' || openFloorState?.status === 'closing'
 
   const loadGraph = useCallback(async () => {
     if (!conversationId) return
@@ -88,6 +91,44 @@ export function TaskGraph({ conversationId }: { conversationId: string | null })
     const interval = setInterval(() => loadGraph(), 2000)
     return () => clearInterval(interval)
   }, [conversationId, loadGraph])
+
+  // Open Floor degraded view: show discussion status instead of task graph
+  if (isOpenFloorActive) {
+    const responseCount = openFloorState?.responses.length ?? 0
+    return (
+      <div className="shrink-0 border-t border-border bg-card/30">
+        <div className="flex items-center gap-2 px-3 py-2">
+          <Brain size={14} className="text-blue-400" />
+          <span className="text-xs font-medium text-foreground">自由讨论中</span>
+          <span className="text-[10px] text-muted-foreground">
+            {responseCount} 个 Agent 已回复
+          </span>
+          <button
+            onClick={() => { window.api.orchestrator.stopOpenFloor(conversationId!).catch(() => {}) }}
+            className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors"
+            title="停止讨论"
+          >
+            <StopCircle size={10} />
+            停止
+          </button>
+        </div>
+        {expanded && (
+          <div className="px-3 pb-2 text-[10px] text-muted-foreground">
+            <p>此模式不跟踪任务链。Agent 自由参与讨论。</p>
+            {openFloorState?.responses.map((r) => (
+              <div key={r.agentId} className="flex items-center gap-1.5 mt-1 text-xs">
+                <CheckCircle size={10} className="text-emerald-400" />
+                <span className="text-foreground">{r.agentName}</span>
+                <span className="text-muted-foreground">
+                  (relevance: {Math.round(r.relevanceScore * 100)}%)
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   if (!conversationId || nodes.length === 0) return null
 

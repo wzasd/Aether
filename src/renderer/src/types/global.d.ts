@@ -18,6 +18,9 @@ declare global {
     | { type: 'permission_request'; confirmId: string; id: string; toolName: string; toolInput: string; sessionId?: string }
     | { type: 'ask_user_question'; confirmId: string; id: string; questions: Array<{ question: string; header?: string; multiSelect?: boolean; options?: Array<{ label: string; description?: string }> }>; sessionId?: string }
     | { type: 'todo_updated'; todos: Array<{ content: string; status: string; activeForm?: string }> }
+    | { type: 'subagent_update'; subagent: { id: string; name: string; type: string; status: string } }
+    | { type: 'agent_observation'; conversationId: string; agentProfileId: string; agentName: string; content: string; timestamp: number; relevanceScore: number }
+    | { type: 'open_floor_closed'; conversationId: string; totalResponses: number; skippedAgents: number }
     | { type: 'subagent_started'; agentId: string; agentType: string; name: string; description?: string; sessionId?: string }
     | { type: 'subagent_stopped'; agentId: string }
     | { type: 'subagent_completed'; agentId: string; result?: string }
@@ -126,6 +129,42 @@ declare global {
     total_cache_read: number
     total_cache_creation: number
     total_cost: number
+  }
+
+  type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+  interface LogEntry {
+    ts: string
+    level: LogLevel
+    source: string
+    message: string
+    meta?: unknown
+    raw?: string
+  }
+
+  interface LogFileInfo {
+    source: string
+    fileName: string
+    path: string
+    size: number
+    updatedAt: number
+  }
+
+  interface LogReadOptions {
+    source?: string
+    limit?: number
+    level?: LogLevel | LogLevel[]
+    query?: string
+    since?: number
+    until?: number
+    tailBytes?: number
+  }
+
+  interface LogReadResult {
+    entries: LogEntry[]
+    file: LogFileInfo | null
+    truncated: boolean
+    bytesRead: number
   }
 
   interface MemoryCandidate {
@@ -366,6 +405,11 @@ declare global {
     dialog: {
       openDirectory: () => Promise<string | null>
     }
+    logs: {
+      getDirectory: () => Promise<string>
+      list: () => Promise<LogFileInfo[]>
+      read: (options?: LogReadOptions) => Promise<LogReadResult>
+    }
     memory: {
       recall: (query: string, options: { scope?: string; workspaceId?: string; conversationId?: string; limit?: number }) => Promise<ProjectMemoryItem[]>
       readProjectMemory: (workspaceId: string) => Promise<string | null>
@@ -441,12 +485,14 @@ declare global {
         content: string
         sessionConfig: { providerType?: string; model: string; permissionMode: string; workingDir: string; sessionId?: string }
         executionMode: 'serial' | 'parallel'
+        collaborationMode?: 'orchestrated' | 'open_floor'
         overrides?: { providerType?: string; model?: string }
         initialMentions?: string
       }) => Promise<void>
       abort: (conversationId: string) => Promise<void>
-      respondPermission: (conversationId: string, approved: boolean) => Promise<void>
-      respondQuestion: (conversationId: string, answer: string) => Promise<void>
+      stopOpenFloor: (conversationId: string) => Promise<void>
+      respondPermission: (conversationId: string, approved: boolean, profileId?: string, taskId?: string) => Promise<void>
+      respondQuestion: (conversationId: string, answer: string, profileId?: string, taskId?: string) => Promise<void>
       getActiveTasks: (conversationId: string) => Promise<unknown[]>
       getActiveGraph: (conversationId: string) => Promise<{ nodes: unknown[]; edges: unknown[] }>
       onA2ATaskCreated: (callback: (task: unknown) => void) => () => void

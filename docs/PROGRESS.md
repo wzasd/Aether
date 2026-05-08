@@ -1,5 +1,5 @@
 ---
-last_verified: 2026-05-07
+last_verified: 2026-05-08 12:05
 doc_kind: progress
 ---
 
@@ -14,22 +14,16 @@ doc_kind: progress
 
 Bytro P0-P3 核心模块已完成。Phase A-J 已收尾。
 
-**Agent Space Phase 1-4 已实现（2026-05-07）。**
+**Agent Space Phase 1-5 已实现（2026-05-08）。**
 
-**Agent A2A Output Scanning + Gap Fill 已实现（2026-05-07）：**
-- Agent 输出中自动检测行首 @mention 并路由（`agent-output-scanner.ts`）
-- Ping-pong 循环检测（A→B→A→B）
-- `drainSerialQueue` 改为循环模式，支持动态 worklist 追加
-- A2ATask 增加 `source` 字段区分用户触发 vs agent 扫描触发
-- **InvocationQueue** — 优先级队列（user > feedback > deep-chain）+ 僵尸防御（10min 阈值）+ 队列位置追踪 + **幂等键去重**
-- **ContinuityCapsule** — Session seal/续传状态机，`ballState` 追踪，`isSessionResumable` 检查，DB 持久化，**`chainIndex/chainTotal` 链位置追踪**，**`formatContinuationPrompt` 注入 Agent 消息**
-- **ReflowOrchestrator** — 并行多 Agent 结果聚合，`pending→running→partial|done|timeout|failed` 状态机，anti-cascade 守卫，**AbortController 取消追踪**
-- **ACP switchModel** — `AgentRuntime.switchModel()` 利用 ACP `session/set_model`
-- **A2A Memory Distiller** — Chain-level 记忆蒸馏，提取跨 Agent 协作惯例/决策/失败教训
-- **drainSerialQueue microtask yield** — `await Promise.resolve()` 修复 feedback task 永久排队 bug
+**Session Layer Fixes + Observability 已实现（2026-05-08）：**
+- 5 session bugs 全部修复（ADR-005~008 落地）
+- @Codex 入口修复（mention-parser 三合一分隔符）
+- 结构化日志模块（16 埋点 / 12 事件类型，分类落盘）
 
 剩余工作：
-1. **Phase 5（体验增强）** — 拓扑可视化、路由链路动画、ACP Runtime
+- **Phase 5（体验增强）** — 全部完成 ✅
+- 无阻塞项
 
 ---
 
@@ -217,6 +211,27 @@ Bytro P0-P3 核心模块已完成。Phase A-J 已收尾。
   - Phase 5：`a2a-memory-distiller.ts` — `ChainMemoryDistillate` + 正则模式提取（decision/convention/failure），`drainSerialQueue()` 完成后触发
   - Phase 6：架构文档更新 — `multi-agent-a2a-orchestration.md` 更新，新增 `acp-protocol-leverage.md` + `a2a-memory-bridge.md`
   - typecheck clean，tests 237 passed / 3 skipped（db.test.ts pre-existing `better-sqlite3` NODE_MODULE_VERSION mismatch）
+- [x] **Session Layer 修复（5 bugs）**：
+  - ADR-005/006/007/008 全部落地
+  - Permission 精确路由（requestId，修复 CRITICAL 权限广播泄露）
+  - Runtime key 三维模型（`conv:profile:taskId`，修复并行任务碰撞）
+  - Lifecycle cleanup 收敛（7 条终止路径 → 1 个 `cleanupRuntime`）
+  - Feedback 上下文组合（父 agent 记忆不再丢失）
+- [x] **@Codex 入口修复**：mention-parser 支持空格/:/：三合一分隔符 + orchestrator 规则统一
+- [x] **Observability 日志模块**：
+  - `src/main/core/logging.ts` — JSONL 结构化日志（写入 `app.getPath('logs')`）
+  - `src/main/ipc/logs.ts` — IPC 读取接口
+  - console bridge 同步写入 `app.log`
+  - 16 个埋点覆盖 12 种 typed events
+  - 分类日志文件：runtime.log / task.log / permission.log / feedback.log / intent.log
+- [x] **文档补全**：
+  - `docs/architecture/decisions/session-layer-adrs.md` — ADR-005~008 完整决策记录
+  - `docs/architecture/slock-agent-communication-reference.md` — Slock↔bytro 通信模型参考
+  - `docs/architecture/observability-logging.md` — 更新（intent:dispatched 事件 + 排查流程）
+  - `docs/features/multi-agent.md` — 更新（D18 observability 行）
+- [x] **Multica Agent 协同参考文档（2026-05-08）**：
+  - 调研 `multica-ai/multica` daemon/runtime/task queue/model discovery 机制，并与 Bytro Agent Space 对比
+  - 新增 `docs/architecture/multica-agent-collaboration-reference.md`，作为 Runtime Inventory、动态模型发现、durable queue lease 后续设计参考
 
 ---
 

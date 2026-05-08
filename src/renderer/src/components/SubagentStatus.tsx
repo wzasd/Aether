@@ -1,3 +1,8 @@
+/**
+ * SubagentStatus - Shows runtime execution state of subagents.
+ * This is different from AgentActivityPanel which shows A2A task delegation.
+ * Located at the bottom of the sidebar.
+ */
 import { useSubagentStore } from '../stores/subagentStore'
 import { Loader2, CheckCircle2 } from 'lucide-react'
 

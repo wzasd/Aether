@@ -15,7 +15,7 @@ import {
 const require = createRequire(import.meta.url)
 const BetterSqlite3 = require('better-sqlite3')
 
-const SCHEMA_VERSION = 25
+const SCHEMA_VERSION = 26
 
 let db: Database.Database
 
@@ -746,6 +746,25 @@ function applyMigrations(): void {
     // Add chain position tracking columns to continuity_capsules
     db.exec(`ALTER TABLE continuity_capsules ADD COLUMN chain_index INTEGER`)
     db.exec(`ALTER TABLE continuity_capsules ADD COLUMN chain_total INTEGER`)
+  }
+
+  if (version < 26) {
+    // Sync preset profile metadata with latest seed data (systemPrompt, whenToUse, outputContract).
+    // Only updates profiles whose id matches a preset seed — user-created profiles are untouched.
+    for (const seed of PRESET_PROFILE_SEEDS) {
+      const row = db.prepare('SELECT system_prompt, when_to_use, output_contract FROM agent_profile_configs WHERE id = ?').get(seed.id) as { system_prompt: string | null; when_to_use: string | null; output_contract: string | null } | undefined
+      if (!row) continue
+      // Only update if content differs from current seed data
+      if (row.system_prompt !== seed.systemPrompt ||
+          row.when_to_use !== seed.whenToUse ||
+          row.output_contract !== seed.outputContract) {
+        db.prepare(`
+          UPDATE agent_profile_configs
+          SET system_prompt = ?, when_to_use = ?, output_contract = ?, updated_at = unixepoch()
+          WHERE id = ?
+        `).run(seed.systemPrompt, seed.whenToUse, seed.outputContract, seed.id)
+      }
+    }
   }
 
   setSchemaVersion(SCHEMA_VERSION)

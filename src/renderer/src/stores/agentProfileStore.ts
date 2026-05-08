@@ -49,30 +49,21 @@ interface PatchProfileData {
 
 interface AgentProfileState {
   profiles: AgentProfileConfig[]
-  activeProfileId: string | null
 
   loadProfiles: (workspaceId?: string) => Promise<void>
   createProfile: (data: NewProfileData) => Promise<AgentProfileConfig>
   updateProfile: (id: string, patch: PatchProfileData) => Promise<AgentProfileConfig>
   deleteProfile: (id: string) => Promise<void>
-  setActiveProfile: (id: string | null) => void
   seedDefaults: () => Promise<void>
 }
 
 export const useAgentProfileStore = create<AgentProfileState>((set, get) => ({
   profiles: [],
-  activeProfileId: null,
 
   loadProfiles: async (workspaceId) => {
     try {
       const profiles = await window.api.agent.listProfiles(workspaceId)
-      set((state) => {
-        const activeStillExists = state.activeProfileId && profiles.some((p: AgentProfileConfig) => p.id === state.activeProfileId)
-        return {
-          profiles: profiles as AgentProfileConfig[],
-          activeProfileId: activeStillExists ? state.activeProfileId : null
-        }
-      })
+      set({ profiles: profiles as AgentProfileConfig[] })
     } catch {
       // keep existing state
     }
@@ -94,14 +85,10 @@ export const useAgentProfileStore = create<AgentProfileState>((set, get) => ({
 
   deleteProfile: async (id) => {
     await window.api.agent.deleteProfile(id)
-    set((state) => {
-      const profiles = state.profiles.filter((p) => p.id !== id)
-      const activeProfileId = state.activeProfileId === id ? null : state.activeProfileId
-      return { profiles, activeProfileId }
-    })
+    set((state) => ({
+      profiles: state.profiles.filter((p) => p.id !== id)
+    }))
   },
-
-  setActiveProfile: (id) => set({ activeProfileId: id }),
 
   seedDefaults: async () => {
     const profiles = await window.api.agent.seedDefaults()

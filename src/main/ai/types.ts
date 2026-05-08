@@ -2,8 +2,8 @@
 // 参考 docs/bytro-reference.md §1-3
 
 // ─── 权限模式 ───
-// 4 种权限模式，映射到 Claude CLI 的 --permission-mode 参数
-export type PermissionMode = 'manual' | 'autoEdit' | 'plan' | 'fullAuto'
+// 5 种权限模式，映射到 Claude CLI 的 --permission-mode 参数
+export type PermissionMode = 'manual' | 'autoEdit' | 'plan' | 'fullAuto' | 'trusted'
 
 export const PERMISSION_MODES: {
   id: PermissionMode
@@ -15,7 +15,8 @@ export const PERMISSION_MODES: {
   { id: 'manual', label: '手动确认', desc: '每个工具调用都需要手动确认' },
   { id: 'autoEdit', label: '自动编辑', desc: '自动批准文件编辑操作' },
   { id: 'plan', label: 'Plan 模式', desc: '需要批准计划后自动执行', isDefault: true },
-  { id: 'fullAuto', label: '全自动', desc: '自动批准所有工具调用', warn: true }
+  { id: 'fullAuto', label: '全自动', desc: '自动批准所有工具调用', warn: true },
+  { id: 'trusted', label: '信任模式', desc: '跳过所有确认弹窗，事后审计（Open Floor 专用）' }
 ]
 
 // ─── 工具元数据 ───

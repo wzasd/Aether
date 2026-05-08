@@ -32,6 +32,7 @@ doc_kind: feature
 | D15 | ACP 动态模型切换（`session/set_model`） | ✅ |
 | D16 | Chain-level Memory Distillation | ✅ |
 | D17 | drainSerialQueue microtask yield（修复 feedback task 永久排队） | ✅ |
+| D18 | Observability 日志接入（orchestrator 12 种事件埋点 + IPC 读取接口） | ✅ |
 
 ## Status（当前状态）
 
@@ -46,6 +47,7 @@ doc_kind: feature
 - ACP 动态模型切换（`session/set_model`）
 - Chain-level Memory Distillation
 - drainSerialQueue microtask yield（修复 feedback task 永久排队 bug）
+- Observability 日志接入（orchestrator 12 种事件埋点 + IPC 读取接口，详见 `docs/architecture/observability-logging.md`）
 
 详见架构文档：
 - `docs/architecture/multi-agent-a2a-orchestration.md`
@@ -63,6 +65,8 @@ doc_kind: feature
 - 会话胶囊：`src/main/ai/continuity-capsule.ts`
 - 结果聚合器：`src/main/ai/reflow-orchestrator.ts`
 - 链级记忆蒸馏：`src/main/ai/a2a-memory-distiller.ts`
+- 日志核心：`src/main/core/logging.ts`
+- 日志 IPC：`src/main/ipc/logs.ts`
 - 前端状态：`src/renderer/src/stores/a2aStore.ts`
 - 流式缓冲：`src/renderer/src/stores/chatStore.ts` (`taskStreams`)
 - Agent 徽章：`src/renderer/src/components/chat/AgentBadge.tsx`

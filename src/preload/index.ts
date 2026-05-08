@@ -208,6 +208,21 @@ const api = {
   dialog: {
     openDirectory: () => ipcRenderer.invoke('dialog:openDirectory')
   },
+  logs: {
+    getDirectory: () =>
+      ipcRenderer.invoke('logs:getDirectory'),
+    list: () =>
+      ipcRenderer.invoke('logs:list'),
+    read: (options?: {
+      source?: string
+      limit?: number
+      level?: 'debug' | 'info' | 'warn' | 'error' | Array<'debug' | 'info' | 'warn' | 'error'>
+      query?: string
+      since?: number
+      until?: number
+      tailBytes?: number
+    }) => ipcRenderer.invoke('logs:read', options)
+  },
   memory: {
     recall: (query: string, options: { scope?: string; workspaceId?: string; conversationId?: string; limit?: number }) =>
       ipcRenderer.invoke('memory:recall', query, options),
@@ -297,15 +312,18 @@ const api = {
       content: string
       sessionConfig: { providerType?: string; model: string; permissionMode: string; workingDir: string; sessionId?: string }
       executionMode: 'serial' | 'parallel'
+      collaborationMode?: 'orchestrated' | 'open_floor'
       overrides?: { providerType?: string; model?: string }
       initialMentions?: string
     }) => ipcRenderer.invoke('orchestrator:sendMessage', payload),
     abort: (conversationId: string) =>
       ipcRenderer.invoke('orchestrator:abort', conversationId),
-    respondPermission: (conversationId: string, approved: boolean) =>
-      ipcRenderer.invoke('orchestrator:respondPermission', conversationId, approved),
-    respondQuestion: (conversationId: string, answer: string) =>
-      ipcRenderer.invoke('orchestrator:respondQuestion', conversationId, answer),
+    stopOpenFloor: (conversationId: string) =>
+      ipcRenderer.invoke('orchestrator:stopOpenFloor', conversationId),
+    respondPermission: (conversationId: string, approved: boolean, profileId?: string, taskId?: string) =>
+      ipcRenderer.invoke('orchestrator:respondPermission', conversationId, approved, profileId, taskId),
+    respondQuestion: (conversationId: string, answer: string, profileId?: string, taskId?: string) =>
+      ipcRenderer.invoke('orchestrator:respondQuestion', conversationId, answer, profileId, taskId),
     getActiveTasks: (conversationId: string) =>
       ipcRenderer.invoke('orchestrator:getActiveTasks', conversationId),
     getActiveGraph: (conversationId: string): Promise<{ nodes: unknown[]; edges: unknown[] }> =>

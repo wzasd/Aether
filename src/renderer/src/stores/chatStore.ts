@@ -10,7 +10,7 @@ import { useChangeStore } from './changeStore'
 import { useA2AStore } from './a2aStore'
 import { extractFileChange } from '../utils/fileChange'
 
-type CollaborationMode = 'direct' | 'explore' | 'build' | 'review'
+type CollaborationMode = 'orchestrated' | 'open_floor'
 
 // ─── 类型定义 ───
 
@@ -67,6 +67,8 @@ interface PendingPermission {
   requestId: string
   sessionId: string
   conversationId?: string
+  profileId?: string
+  taskId?: string
   toolName: string
   toolInput: string
 }
@@ -76,6 +78,8 @@ interface PendingQuestion {
   requestId: string
   sessionId: string
   conversationId?: string
+  profileId?: string
+  taskId?: string
   questions: Array<{
     question: string
     header?: string
@@ -149,8 +153,22 @@ interface ChatState {
   // 预填 @mentions (AC #3: NewTaskDialog → first message)
   pendingInitialMentions: string | null
   setPendingInitialMentions: (mentions: string | null) => void
-  pendingCollaborationMode: CollaborationMode | null
-  setPendingCollaborationMode: (mode: CollaborationMode | null) => void
+  pendingCollaborationMode: Record<string, CollaborationMode>
+  setPendingCollaborationMode: (conversationId: string, mode: CollaborationMode) => void
+
+  // Canonical NewTask dialog — single entry point for all "New" buttons
+  newTaskDialogOpen: boolean
+  openNewTaskDialog: () => void
+  closeNewTaskDialog: () => void
+
+  // Open Floor state
+  openFloorStates: Record<string, {
+    status: 'active' | 'closing' | 'closed'
+    responses: Array<{ agentId: string; agentName: string; content: string; timestamp: number; relevanceScore: number }>
+    startTime: number
+  }>
+  addOpenFloorResponse: (conversationId: string, response: { agentId: string; agentName: string; content: string; timestamp: number; relevanceScore: number }) => void
+  closeOpenFloor: (conversationId: string) => void
 
   // 使用统计
   usage: UsageInfo | null
@@ -175,11 +193,11 @@ const STREAMING_SAFETY_TIMEOUT = 300000 // 5 分钟
 
 export const useChatStore = create<ChatState>((set, get) => {
   let streamingTimeoutId: ReturnType<typeof setTimeout> | null = null
-	  let unsubscribeAI: (() => void) | null = null
-	  const conversationSessionIds = new Map<string, string>()
-	  const sessionConversationIds = new Map<string, string>()
-	  const persistentSessionIds = new Set<string>()
-	  const abortedSessionIds = new Set<string>()
+    let unsubscribeAI: (() => void) | null = null
+    const conversationSessionIds = new Map<string, string>()
+    const sessionConversationIds = new Map<string, string>()
+    const persistentSessionIds = new Set<string>()
+    const abortedSessionIds = new Set<string>()
 
   // Wire up A2A task lifecycle events once
   const a2aStore = useA2AStore.getState()
@@ -193,119 +211,119 @@ export const useChatStore = create<ChatState>((set, get) => {
     a2aStore.onTaskQueued(payload as Parameters<typeof a2aStore.onTaskQueued>[0])
   })
 
-	  const appendMessageIfVisible = (conversationId: string, message: Message): void => {
-	    set((currentState) => {
-	      if (currentState.currentConversation?.id !== conversationId) {
-	        return currentState
-	      }
-	      return {
-	        ...currentState,
-	        messages: [...currentState.messages, message]
-	      }
-	    })
-	  }
+    const appendMessageIfVisible = (conversationId: string, message: Message): void => {
+      set((currentState) => {
+        if (currentState.currentConversation?.id !== conversationId) {
+          return currentState
+        }
+        return {
+          ...currentState,
+          messages: [...currentState.messages, message]
+        }
+      })
+    }
 
-	  const getEventSessionId = (event: RoutedAIEvent): string | null => {
-	    if (typeof event.sessionId === 'string' && event.sessionId) return event.sessionId
-	    if ('id' in event && typeof event.id === 'string' && event.id) return event.id
-	    return null
-	  }
+    const getEventSessionId = (event: RoutedAIEvent): string | null => {
+      if (typeof event.sessionId === 'string' && event.sessionId) return event.sessionId
+      if ('id' in event && typeof event.id === 'string' && event.id) return event.id
+      return null
+    }
 
-	  const getEventConversationId = (event: RoutedAIEvent, state: ChatState): string | null => {
-	    if (typeof event.conversationId === 'string' && event.conversationId) {
-	      return event.conversationId
-	    }
+    const getEventConversationId = (event: RoutedAIEvent, state: ChatState): string | null => {
+      if (typeof event.conversationId === 'string' && event.conversationId) {
+        return event.conversationId
+      }
 
-	    const sessionId = getEventSessionId(event)
-	    if (sessionId?.startsWith('orch:')) return sessionId.slice(5)
-	    if (sessionId && sessionConversationIds.has(sessionId)) {
-	      return sessionConversationIds.get(sessionId)!
-	    }
+      const sessionId = getEventSessionId(event)
+      if (sessionId?.startsWith('orch:')) return sessionId.slice(5)
+      if (sessionId && sessionConversationIds.has(sessionId)) {
+        return sessionConversationIds.get(sessionId)!
+      }
 
-	    if (state.streamingRequestId?.startsWith('orch:')) {
-	      return state.streamingRequestId.slice(5)
-	    }
+      if (state.streamingRequestId?.startsWith('orch:')) {
+        return state.streamingRequestId.slice(5)
+      }
 
-	    return state.currentConversation?.id ?? null
-	  }
+      return state.currentConversation?.id ?? null
+    }
 
-	  const isEventForVisibleConversation = (event: RoutedAIEvent, state: ChatState): boolean => {
-	    const conversationId = getEventConversationId(event, state)
-	    return Boolean(conversationId && state.currentConversation?.id === conversationId)
-	  }
+    const isEventForVisibleConversation = (event: RoutedAIEvent, state: ChatState): boolean => {
+      const conversationId = getEventConversationId(event, state)
+      return Boolean(conversationId && state.currentConversation?.id === conversationId)
+    }
 
-	  const isEventForActiveStream = (event: RoutedAIEvent, state: ChatState): boolean => {
-	    const activeStreamId = state.streamingRequestId
-	    if (!activeStreamId) return false
+    const isEventForActiveStream = (event: RoutedAIEvent, state: ChatState): boolean => {
+      const activeStreamId = state.streamingRequestId
+      if (!activeStreamId) return false
 
-	    const sessionId = getEventSessionId(event)
-	    if (sessionId === activeStreamId) return true
+      const sessionId = getEventSessionId(event)
+      if (sessionId === activeStreamId) return true
 
-	    const conversationId = getEventConversationId(event, state)
-	    return Boolean(
-	      activeStreamId.startsWith('orch:') &&
-	      conversationId === activeStreamId.slice(5)
-	    )
-	  }
+      const conversationId = getEventConversationId(event, state)
+      return Boolean(
+        activeStreamId.startsWith('orch:') &&
+        conversationId === activeStreamId.slice(5)
+      )
+    }
 
-	  const serializeCurrentToolCalls = (state: ChatState): string | undefined => {
-	    if (state.currentTurnToolIds.length === 0) return undefined
-	    const toolCalls = state.currentTurnToolIds
-	      .map((tid) => {
-	        const tool = state.tools[tid]
-	        return tool
-	          ? {
-	              id: tid,
-	              toolName: tool.name,
-	              toolInput: tool.input,
-	              status: tool.status === 'running' ? 'error' : tool.status,
-	              result: tool.result
-	            }
-	          : null
-	      })
-	      .filter(Boolean)
+    const serializeCurrentToolCalls = (state: ChatState): string | undefined => {
+      if (state.currentTurnToolIds.length === 0) return undefined
+      const toolCalls = state.currentTurnToolIds
+        .map((tid) => {
+          const tool = state.tools[tid]
+          return tool
+            ? {
+                id: tid,
+                toolName: tool.name,
+                toolInput: tool.input,
+                status: tool.status === 'running' ? 'error' : tool.status,
+                result: tool.result
+              }
+            : null
+        })
+        .filter(Boolean)
 
-	    return toolCalls.length > 0 ? JSON.stringify(toolCalls) : undefined
-	  }
+      return toolCalls.length > 0 ? JSON.stringify(toolCalls) : undefined
+    }
 
-	  const persistStoppedTurn = (state: ChatState, conversationId: string, notice: string): void => {
-	    const partialText = state.streamingText.trim()
-	    const thinking = state.thinkingText.trim()
-	    const toolCalls = serializeCurrentToolCalls(state)
-	    const hasGeneratedData = Boolean(partialText || thinking || toolCalls)
+    const persistStoppedTurn = (state: ChatState, conversationId: string, notice: string): void => {
+      const partialText = state.streamingText.trim()
+      const thinking = state.thinkingText.trim()
+      const toolCalls = serializeCurrentToolCalls(state)
+      const hasGeneratedData = Boolean(partialText || thinking || toolCalls)
 
-	    void (async () => {
-	      if (hasGeneratedData) {
-	        const assistantMessage = await window.api.message.create({
-	          conversation_id: conversationId,
-	          role: 'assistant',
-	          content: partialText,
-	          thinking: thinking || undefined,
-	          tool_calls: toolCalls
-	        })
-	        appendMessageIfVisible(conversationId, assistantMessage as Message)
-	      }
+      void (async () => {
+        if (hasGeneratedData) {
+          const assistantMessage = await window.api.message.create({
+            conversation_id: conversationId,
+            role: 'assistant',
+            content: partialText,
+            thinking: thinking || undefined,
+            tool_calls: toolCalls
+          })
+          appendMessageIfVisible(conversationId, assistantMessage as Message)
+        }
 
-	      const systemMessage = await window.api.message.create({
-	        conversation_id: conversationId,
-	        role: 'system',
-	        content: notice
-	      })
-	      appendMessageIfVisible(conversationId, systemMessage as Message)
-	    })().catch(() => {
-	      /* best-effort stopped-turn persistence */
-	    })
-	  }
+        const systemMessage = await window.api.message.create({
+          conversation_id: conversationId,
+          role: 'system',
+          content: notice
+        })
+        appendMessageIfVisible(conversationId, systemMessage as Message)
+      })().catch(() => {
+        /* best-effort stopped-turn persistence */
+      })
+    }
 
-	  const resetStreamingTimeout = (): void => {
-	    clearStreamingTimeout()
-	    streamingTimeoutId = setTimeout(() => {
-	      const state = get()
-	      if (state.streamingRequestId || state.isOptimisticStreaming) {
-	        get().abortStream('生成超时，已停止')
-	      }
-	    }, STREAMING_SAFETY_TIMEOUT)
-	  }
+    const resetStreamingTimeout = (): void => {
+      clearStreamingTimeout()
+      streamingTimeoutId = setTimeout(() => {
+        const state = get()
+        if (state.streamingRequestId || state.isOptimisticStreaming) {
+          get().abortStream('生成超时，已停止')
+        }
+      }, STREAMING_SAFETY_TIMEOUT)
+    }
 
   const clearStreamingTimeout = (): void => {
     if (streamingTimeoutId) {
@@ -450,8 +468,45 @@ export const useChatStore = create<ChatState>((set, get) => {
     // 预填 @mentions（AC #3）
     pendingInitialMentions: null,
     setPendingInitialMentions: (mentions) => set({ pendingInitialMentions: mentions }),
-    pendingCollaborationMode: null,
-    setPendingCollaborationMode: (mode) => set({ pendingCollaborationMode: mode }),
+    pendingCollaborationMode: {},
+    setPendingCollaborationMode: (conversationId, mode) =>
+      set((s) => ({ pendingCollaborationMode: { ...s.pendingCollaborationMode, [conversationId]: mode } })),
+
+    // Canonical NewTask dialog — single entry point for all "New" buttons
+    newTaskDialogOpen: false,
+    openNewTaskDialog: () => set({ newTaskDialogOpen: true }),
+    closeNewTaskDialog: () => set({ newTaskDialogOpen: false }),
+
+    // Open Floor state
+    openFloorStates: {},
+    addOpenFloorResponse: (conversationId, response) =>
+      set((s) => {
+        const existing = s.openFloorStates[conversationId]
+        if (!existing || existing.status === 'closed') return s
+        return {
+          openFloorStates: {
+            ...s.openFloorStates,
+            [conversationId]: {
+              ...existing,
+              responses: [...existing.responses, response]
+            }
+          }
+        }
+      }),
+    closeOpenFloor: (conversationId) =>
+      set((s) => {
+        const existing = s.openFloorStates[conversationId]
+        if (!existing) return s
+        // Clean up per-conversation mode to prevent memory leak (CR #5)
+        const { [conversationId]: _, ...restModes } = s.pendingCollaborationMode
+        return {
+          openFloorStates: {
+            ...s.openFloorStates,
+            [conversationId]: { ...existing, status: 'closed' as const }
+          },
+          pendingCollaborationMode: restModes,
+        }
+      }),
 
     // 使用统计
     usage: null,
@@ -548,20 +603,15 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     createConversation: async (data) => {
       try {
-        const agentStore = useAgentProfileStore.getState()
         const conversation = await window.api.conversation.create({
           ...data,
-          agent_profile_id: agentStore.activeProfileId ?? undefined,
           team_id: data.team_id ?? undefined,
           task_id: data.task_id ?? undefined,
-          is_draft: data.is_draft ?? 0
+          is_draft: 0
         })
-        // Drafts are hidden from TaskRail — only add to list when promoted
-        if (!conversation.is_draft) {
-          set((state) => ({
-            conversations: [conversation, ...state.conversations],
-          }))
-        }
+        set((state) => ({
+          conversations: [conversation, ...state.conversations],
+        }))
         set({ currentConversation: conversation, messages: [] })
         return conversation
       } catch (err) {
@@ -573,11 +623,18 @@ export const useChatStore = create<ChatState>((set, get) => {
     deleteConversation: async (id) => {
       try {
         await window.api.conversation.delete(id)
-        set((state) => ({
-          conversations: state.conversations.filter((c) => c.id !== id),
-          currentConversation: state.currentConversation?.id === id ? null : state.currentConversation,
-          messages: state.currentConversation?.id === id ? [] : state.messages
-        }))
+        set((state) => {
+          // Clean up per-conversation state to prevent memory leak (CR #5)
+          const { [id]: _, ...restModes } = state.pendingCollaborationMode
+          const { [id]: __, ...restOpenFloor } = state.openFloorStates
+          return {
+            conversations: state.conversations.filter((c) => c.id !== id),
+            currentConversation: state.currentConversation?.id === id ? null : state.currentConversation,
+            messages: state.currentConversation?.id === id ? [] : state.messages,
+            pendingCollaborationMode: restModes,
+            openFloorStates: restOpenFloor,
+          }
+        })
       } catch (err) {
         console.error('Failed to delete conversation:', err)
       }
@@ -662,24 +719,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           }))
         }
 
-        // Promote draft: make conversation visible in TaskRail with the correct title
-        if (state.currentConversation?.is_draft) {
-          try {
-            const promoted = await window.api.conversation.promoteDraft(conversationId)
-            // Merge the optimistic title in case autoTitle hasn't persisted yet
-            const promotedWithTitle = autoTitle ? { ...promoted, title: autoTitle } : promoted
-            set((currentState) => ({
-              currentConversation:
-                currentState.currentConversation?.id === conversationId
-                  ? { ...currentState.currentConversation, is_draft: 0 }
-                  : currentState.currentConversation,
-              conversations: [promotedWithTitle, ...currentState.conversations.filter((c) => c.id !== conversationId)]
-            }))
-          } catch { /* best-effort */ }
-        }
-      }
-
-      // 保存用户消息到 DB
+        // 保存用户消息到 DB
       try {
         const message = await window.api.message.create({
           conversation_id: conversationId,
@@ -702,10 +742,11 @@ export const useChatStore = create<ChatState>((set, get) => {
         doneRequestIds: {}
       })
       resetStreamingTimeout()
+      }
 
       const config = useSessionConfigStore.getState()
       const agentStore = useAgentProfileStore.getState()
-      let activeProfile = agentStore.profiles.find((p) => p.id === agentStore.activeProfileId && p.isEnabled)
+      let activeProfile = agentStore.profiles.find((p) => p.isEnabled) ?? undefined
       const workspaceId = state.currentConversation?.workspace_id || useWorkspaceStore.getState().currentWorkspaceId
       const workspaceEntry = workspaceId
         ? useWorkspaceStore.getState().workspaces.find((w) => w.id === workspaceId)
@@ -758,13 +799,17 @@ export const useChatStore = create<ChatState>((set, get) => {
 
           const taskOverrides = get().pendingTaskOverrides
           if (taskOverrides) set({ pendingTaskOverrides: null })
-          const collaborationMode = get().pendingCollaborationMode
-          if (collaborationMode) set({ pendingCollaborationMode: null })
 
-          const modeExecution = collaborationMode === 'explore' ? 'parallel' : config.executionMode ?? 'serial'
-          const modePermission = collaborationMode === 'explore' || collaborationMode === 'review'
-            ? 'manual'
-            : config.permissionMode
+          // collaborationMode is now per-conversation (Record<string, CollaborationMode>)
+          const collaborationMode = get().pendingCollaborationMode[conversationId]
+          if (collaborationMode) {
+            const { [conversationId]: _, ...rest } = get().pendingCollaborationMode
+            set({ pendingCollaborationMode: rest })
+          }
+
+          const isOpenFloor = collaborationMode === 'open_floor'
+          const modeExecution = isOpenFloor ? 'parallel' : config.executionMode ?? 'serial'
+          const modePermission = isOpenFloor ? 'manual' : config.permissionMode
 
           await window.api.orchestrator.sendMessage({
             conversationId,
@@ -856,54 +901,54 @@ export const useChatStore = create<ChatState>((set, get) => {
       }
     },
 
-	    abortStream: (notice = '已手动停止生成') => {
-	      const state = get()
-	      const sessionId = state.streamingRequestId
-	      const conversationId =
-	        (sessionId?.startsWith('orch:') ? sessionId.slice(5) : null) ||
-	        (sessionId && sessionConversationIds.get(sessionId)) ||
-	        state.currentConversation?.id ||
-	        null
+    abortStream: (notice = '已手动停止生成') => {
+      const state = get()
+      const sessionId = state.streamingRequestId
+      const conversationId =
+        (sessionId?.startsWith('orch:') ? sessionId.slice(5) : null) ||
+        (sessionId && sessionConversationIds.get(sessionId)) ||
+        state.currentConversation?.id ||
+        null
 
-	      if (sessionId) {
-	        abortedSessionIds.add(sessionId)
-	        if (sessionId.startsWith('orch:')) {
-	          const convId = sessionId.slice(5)
-	          window.api.orchestrator.abort(convId)
-	        } else {
-	          window.api.chat.abort(sessionId)
-	          useMemoryStore.getState().endAgentSessionByExternalId(sessionId).catch(() => {})
-	        }
-	      }
+        if (sessionId) {
+          abortedSessionIds.add(sessionId)
+          if (sessionId.startsWith('orch:')) {
+            const convId = sessionId.slice(5)
+            window.api.orchestrator.abort(convId)
+          } else {
+            window.api.chat.abort(sessionId)
+            useMemoryStore.getState().endAgentSessionByExternalId(sessionId).catch(() => {})
+          }
+        }
 
-	      if (conversationId) {
-	        persistStoppedTurn(state, conversationId, notice)
-	      }
+        if (conversationId) {
+          persistStoppedTurn(state, conversationId, notice)
+        }
 
-	      set({
-	        streamingRequestId: null,
-	        isOptimisticStreaming: false,
-	        streamingText: '',
-	        thinkingText: '',
-	        tools: {},
-	        currentTurnToolIds: [],
-        taskStreams: {},
-	        pendingPermissions: sessionId
-	          ? state.pendingPermissions.filter((permission) => permission.sessionId !== sessionId)
-	          : [],
-	        pendingQuestions: sessionId
-	          ? state.pendingQuestions.filter((question) => question.sessionId !== sessionId)
-	          : [],
-	        doneRequestIds: {}
-	      })
-	      clearStreamingTimeout()
-	    },
+        set({
+          streamingRequestId: null,
+          isOptimisticStreaming: false,
+          streamingText: '',
+          thinkingText: '',
+          tools: {},
+          currentTurnToolIds: [],
+          taskStreams: {},
+          pendingPermissions: sessionId
+            ? state.pendingPermissions.filter((permission) => permission.sessionId !== sessionId)
+            : [],
+          pendingQuestions: sessionId
+            ? state.pendingQuestions.filter((question) => question.sessionId !== sessionId)
+            : [],
+          doneRequestIds: {}
+        })
+        clearStreamingTimeout()
+      },
 
     confirmPermission: (confirmId, approved) => {
       const pending = get().pendingPermissions.find((p) => p.confirmId === confirmId)
       const sessionId = pending?.sessionId || get().streamingRequestId
       if (pending?.conversationId) {
-        window.api.orchestrator.respondPermission(pending.conversationId, approved)
+        window.api.orchestrator.respondPermission(pending.conversationId, approved, pending.profileId, pending.taskId)
       } else if (sessionId) {
         window.api.chat.respondPermission(sessionId, approved)
       }
@@ -923,7 +968,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       const sessionId = pending?.sessionId || get().streamingRequestId
       const answerStr = Object.values(answers).join(',')
       if (pending?.conversationId) {
-        window.api.orchestrator.respondQuestion(pending.conversationId, answerStr)
+        window.api.orchestrator.respondQuestion(pending.conversationId, answerStr, pending.profileId, pending.taskId)
       } else if (sessionId) {
         window.api.chat.respondQuestion(sessionId, answerStr)
       }
@@ -1159,6 +1204,8 @@ export const useChatStore = create<ChatState>((set, get) => {
                 requestId: event.id,
                 sessionId: event.sessionId || state.streamingRequestId || '',
                 conversationId: routedEvent.conversationId ?? permConvId,
+                profileId: routedEvent.agentProfileId ?? undefined,
+                taskId: routedEvent.taskId,
                 toolName: event.toolName,
                 toolInput: event.toolInput
               }
@@ -1181,6 +1228,8 @@ export const useChatStore = create<ChatState>((set, get) => {
                 requestId: event.id,
                 sessionId: event.sessionId || state.streamingRequestId || '',
                 conversationId: routedEvent.conversationId,
+                profileId: routedEvent.agentProfileId ?? undefined,
+                taskId: routedEvent.taskId,
                 questions: event.questions
               }
             ]
@@ -1266,13 +1315,13 @@ export const useChatStore = create<ChatState>((set, get) => {
           break
         }
 
-	        case 'complete': {
-	          if (event.sessionId && abortedSessionIds.has(event.sessionId)) {
-	            break
-	          }
+          case 'complete': {
+            if (event.sessionId && abortedSessionIds.has(event.sessionId)) {
+              break
+            }
 
-	          // 保存 AI 消息到 DB
-	          // Per-task completion (M2-2)
+            // 保存 AI 消息到 DB
+            // Per-task completion (M2-2)
           if (taskId) {
             const ts = state.taskStreams[taskId]
             const fullTaskText = event.fullText || ts?.streamingText || ''
@@ -1405,21 +1454,21 @@ export const useChatStore = create<ChatState>((set, get) => {
           break
         }
 
-	        case 'done': {
-	          // Per-task completion (orchestrator sub-task): only clean up
-	          // per-task state, do NOT release the global composer. The
-	          // orchestrator task chain (pipeline, feedback follow-ups) may
-	          // still be running.
+          case 'done': {
+            // Per-task completion (orchestrator sub-task): only clean up
+            // per-task state, do NOT release the global composer. The
+            // orchestrator task chain (pipeline, feedback follow-ups) may
+            // still be running.
           if (taskId) {
             deactivateTaskStream(taskId)
             break
           }
 
           // 清理流式状态，标记 turn boundary
-	          const doneId = event.id || state.streamingRequestId
-	          const newDoneIds = { ...state.doneRequestIds }
-	          if (doneId) newDoneIds[doneId] = Date.now()
-	          if (doneId) abortedSessionIds.delete(doneId)
+            const doneId = event.id || state.streamingRequestId
+            const newDoneIds = { ...state.doneRequestIds }
+            if (doneId) newDoneIds[doneId] = Date.now()
+            if (doneId) abortedSessionIds.delete(doneId)
 
           // 清理 60s 前的 doneRequestIds
           const cutoff = Date.now() - 60000
@@ -1448,11 +1497,11 @@ export const useChatStore = create<ChatState>((set, get) => {
           break
         }
 
-	        case 'error': {
-	          const errorId = event.sessionId || event.id || state.streamingRequestId
-	          if (errorId) {
-	            abortedSessionIds.delete(errorId)
-	            const convId = sessionConversationIds.get(errorId)
+          case 'error': {
+            const errorId = event.sessionId || event.id || state.streamingRequestId
+            if (errorId) {
+              abortedSessionIds.delete(errorId)
+              const convId = sessionConversationIds.get(errorId)
             if (convId) {
               conversationSessionIds.delete(convId)
               sessionConversationIds.delete(errorId)
@@ -1502,6 +1551,51 @@ export const useChatStore = create<ChatState>((set, get) => {
 
         case 'system_init': {
           // CLI 初始化，可记录 session 信息
+          break
+        }
+
+        case 'agent_observation': {
+          const obsConvId = event.conversationId || state.currentConversation?.id
+          if (!obsConvId) break
+          // Guard: ignore late observations after Open Floor has been closed (CR #9)
+          if (state.openFloorStates[obsConvId]?.status !== 'active') break
+          // Add the observation to the Open Floor state
+          get().addOpenFloorResponse(obsConvId, {
+            agentId: event.agentProfileId,
+            agentName: event.agentName,
+            content: event.content,
+            timestamp: event.timestamp,
+            relevanceScore: event.relevanceScore ?? 0
+          })
+          // Also append as a visible message in the conversation
+          if (state.currentConversation?.id === obsConvId) {
+            void window.api.message.create({
+              conversation_id: obsConvId,
+              role: 'assistant',
+              content: `**${event.agentName}** (relevance: ${Math.round((event.relevanceScore ?? 0) * 100)}%)\n\n${event.content}`,
+              agent_profile_id: event.agentProfileId
+            }).then((message) => {
+              appendMessageIfVisible(obsConvId, message as Message)
+            }).catch(() => {})
+          }
+          break
+        }
+
+        case 'open_floor_closed': {
+          const closedConvId = event.conversationId || state.currentConversation?.id
+          if (!closedConvId) break
+          get().closeOpenFloor(closedConvId)
+          // Append summary system message
+          const summary = `🧠 自由讨论结束：${event.totalResponses} 个 Agent 回复，${event.skippedAgents} 个静默`
+          if (state.currentConversation?.id === closedConvId) {
+            void window.api.message.create({
+              conversation_id: closedConvId,
+              role: 'system',
+              content: summary
+            }).then((message) => {
+              appendMessageIfVisible(closedConvId, message as Message)
+            }).catch(() => {})
+          }
           break
         }
       }

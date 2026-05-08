@@ -1,3 +1,8 @@
+/**
+ * AgentActivityPanel - Shows A2A task-level activity (who delegates to whom).
+ * This is different from SubagentStatus which shows runtime execution state.
+ * Located at the bottom of the conversation panel.
+ */
 import { ChevronDown, Bot } from 'lucide-react'
 import { useState } from 'react'
 import { useChatStore } from '../../stores/chatStore'

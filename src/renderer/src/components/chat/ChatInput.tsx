@@ -7,11 +7,12 @@ import { useSessionConfigStore } from '../../stores/sessionConfigStore'
 import { useAgentProfileStore } from '../../stores/agentProfileStore'
 import { ModelSelector } from '../ModelSelector'
 import { ConfigOptions } from '../ConfigOptions'
+import { AgentStatusBar } from './AgentStatusBar'
 
 const MODES = ['build', 'plan', 'review', 'ask'] as const
 type ChatMode = (typeof MODES)[number]
 
-type PermissionMode = 'manual' | 'autoEdit' | 'plan' | 'fullAuto'
+type PermissionMode = 'manual' | 'autoEdit' | 'plan' | 'fullAuto' | 'trusted'
 
 function modeToPermission(mode: ChatMode): PermissionMode {
   if (mode === 'build') return 'autoEdit'
@@ -45,21 +46,18 @@ export function ChatInput({ conversationId }: { conversationId: string }) {
   const activeSessionId = useChatStore(
     (s) => s.activeSessionMap[`${conversationId}:${providerType}`] ?? undefined
   )
+  const collaborationMode = useChatStore((s) => s.pendingCollaborationMode[conversationId])
+  const openFloorState = useChatStore((s) => s.openFloorStates[conversationId])
+  const isOpenFloor = openFloorState?.status === 'active'
 
   const [mode, setMode] = useState<ChatMode>(
     permissionToMode(permissionMode)
   )
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Agent profile selector
-  const { profiles, activeProfileId, setActiveProfile, loadProfiles } = useAgentProfileStore()
-  const currentWorkspaceId = useWorkspaceStore((s) => s.currentWorkspaceId)
+  // Agent profiles for @mention
+  const { profiles } = useAgentProfileStore()
   const enabledProfiles = profiles.filter((p) => p.isEnabled)
-  const activeProfile = profiles.find((p) => p.id === activeProfileId)
-
-  useEffect(() => {
-    loadProfiles(currentWorkspaceId ?? undefined).catch(() => {})
-  }, [loadProfiles, currentWorkspaceId])
 
   const isStreaming = isOptimisticStreaming || streamingRequestId !== null
 
@@ -219,7 +217,10 @@ export function ChatInput({ conversationId }: { conversationId: string }) {
         </div>
       )}
 
-      {/* Mode + Agent + Execution mode row */}
+      {/* Unified Agent Status Bar */}
+      <AgentStatusBar conversationId={conversationId} />
+
+      {/* Mode selector row */}
       <div className="flex items-center gap-2 mb-2">
         <div className="flex gap-1">
           {MODES.map((m) => (
@@ -237,43 +238,11 @@ export function ChatInput({ conversationId }: { conversationId: string }) {
           ))}
         </div>
 
-{/* Provider + Model selector (shown when no agent profile is active) */}
-        {!activeProfile && <ModelSelector activeSessionId={activeSessionId} />}
+        {/* Provider + Model selector */}
+        <ModelSelector activeSessionId={activeSessionId} />
 
         {/* Live agent config options (ACP session_config_option_update) */}
         {activeSessionId && <ConfigOptions activeSessionId={activeSessionId} />}
-
-        {/* Execution mode toggle (M2-1: unlocked after per-task buffer support) */}
-        {activeProfile && (
-          <button
-            onClick={() => {
-              const next = executionMode === 'serial' ? 'parallel' : 'serial'
-              setExecutionMode(next)
-            }}
-            className={`px-2 py-1 rounded text-xs border ${
-              executionMode === 'parallel'
-                ? 'bg-emerald-600/20 text-emerald-400 border-emerald-600/30'
-                : 'text-muted-foreground border-border hover:border-ring'
-            }`}
-            title={executionMode === 'parallel' ? '并行模式：多个 Agent 同时执行' : '串行模式：Agent 按顺序执行'}
-          >
-            {executionMode === 'parallel' ? '并行' : '串行'}
-          </button>
-        )}
-
-        {/* Agent selector */}
-        {enabledProfiles.length > 0 && (
-          <select
-            value={activeProfileId ?? ''}
-            onChange={(e) => setActiveProfile(e.target.value || null)}
-            className="bg-secondary border border-border rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-border ml-auto"
-          >
-            <option value="">Default</option>
-            {enabledProfiles.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-        )}
       </div>
 
       {/* Input row */}

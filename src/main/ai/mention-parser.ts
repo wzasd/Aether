@@ -1,8 +1,16 @@
 import type { ParsedMention } from './a2a-types'
 
-// Matches @AgentName: <content> at start of string or after whitespace
+// Matches @AgentName: <content>, @AgentName：<content>, or @AgentName <content>
+// at start of string or after whitespace. The space-delimited form matches how
+// chat mentions are naturally typed (`@Codex review this`) while keeping the
+// colon form for multi-agent task lists.
 // Stops at the next @mention or end of string (no `m` flag — `$` = end of string)
-const MENTION_PATTERN = /(?:^|(?<=\s))@([\w-]+):\s*([\s\S]*?)(?=(?:\s)@[\w-]+:|$)/g
+const MENTION_PATTERN = /(?:^|(?<=\s))@([\w-]+)(?::|：|\s+)\s*([\s\S]*?)(?=(?:\s)@[\w-]+(?::|：|\s+)|$)/g
+
+export function stripMentionSegments(text: string): string {
+  MENTION_PATTERN.lastIndex = 0
+  return text.replace(MENTION_PATTERN, '').trim()
+}
 
 export function parseMentions(text: string, knownAgentNames: string[]): ParsedMention[] {
   if (!text || knownAgentNames.length === 0) return []

@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
 import {
   Plus, ChevronDown, ChevronRight,
   FolderOpen, Clock, Check, Settings,
@@ -9,11 +8,13 @@ import {
 import { useUIStore } from '../../stores/uiStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useChatStore } from '../../stores/chatStore'
+import { useAgentProfileStore } from '../../stores/agentProfileStore'
 import { ConversationExportMenu } from '../ConversationExportMenu'
 
 interface SharedConversationProps {
   children: React.ReactNode
   onOpenSettings?: () => void
+  onOpenAgentSettings?: () => void
 }
 
 const AGENT_STATUS_COLORS: Record<string, string> = {
@@ -24,9 +25,8 @@ const AGENT_STATUS_COLORS: Record<string, string> = {
   waiting:   'bg-orange-400',
 }
 
-export function SharedConversation({ children, onOpenSettings }: SharedConversationProps) {
-  const navigate = useNavigate()
-  const createConversation = useChatStore((s) => s.createConversation)
+export function SharedConversation({ children, onOpenSettings, onOpenAgentSettings }: SharedConversationProps) {
+  const openNewTaskDialog = useChatStore((s) => s.openNewTaskDialog)
   const taskRailCollapsed = useUIStore((s) => s.taskRailCollapsed)
   const setTaskRailCollapsed = useUIStore((s) => s.setTaskRailCollapsed)
   const workspaceCollapsed = useUIStore((s) => s.workspaceCollapsed)
@@ -54,10 +54,8 @@ export function SharedConversation({ children, onOpenSettings }: SharedConversat
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  const agents = [
-    { id: '1', name: 'Architect', role: '规划', status: 'idle' as const },
-    { id: '2', name: 'Coder', role: '实现', status: 'editing' as const },
-  ]
+  const profiles = useAgentProfileStore((s) => s.profiles)
+  const enabledAgents = profiles.filter((p) => p.isEnabled)
 
   const allProjects = workspaces.length > 0
     ? workspaces.map((w) => ({
@@ -107,15 +105,7 @@ export function SharedConversation({ children, onOpenSettings }: SharedConversat
 
         <button
           title="新建对话"
-          onClick={() => {
-            void createConversation({
-              title: 'New Chat',
-              workspace_id: currentWorkspaceId ?? undefined,
-              is_draft: 1
-            }).then((conv) => {
-              if (conv?.id) navigate(`/chat/${conv.id}`)
-            })
-          }}
+          onClick={openNewTaskDialog}
           className="titlebar-no-drag relative z-40 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-card transition-colors shrink-0"
         >
           <Plus size={13} />
@@ -209,24 +199,35 @@ export function SharedConversation({ children, onOpenSettings }: SharedConversat
         )}
       </div>
 
-      {/* ── Agents strip ──────────────────────────────────────────── */}
-      <div className="p-3 border-b border-border">
+      {/* ── Active Agent Quick View ─────────────────────────────── */}
+      <div className="px-3 py-2 border-b border-border bg-secondary/20">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">活跃 Agent</span>
+          {onOpenAgentSettings && (
+            <button
+              onClick={onOpenAgentSettings}
+              className="text-[10px] text-muted-foreground hover:text-foreground transition-colors underline"
+            >
+              管理
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {agents.map((agent) => (
+          {enabledAgents.length === 0 && (
+            <span className="text-xs text-muted-foreground">未配置 Agent</span>
+          )}
+          {enabledAgents.map((agent) => (
             <div
               key={agent.id}
-              className="px-3 py-1.5 bg-card border border-border rounded flex items-center gap-2"
+              className="px-2.5 py-1 rounded flex items-center gap-1.5 text-xs bg-card border border-border text-foreground"
             >
-              <div className={`w-1.5 h-1.5 rounded-full ${AGENT_STATUS_COLORS[agent.status]}`} />
-              <div>
-                <div className="text-xs text-foreground">{agent.name}</div>
-                <div className="text-xs text-muted-foreground">{agent.role}</div>
-              </div>
+              <div className="w-1.5 h-1.5 rounded-full bg-accent" />
+              <span>{agent.name}</span>
+              {agent.role && (
+                <span className="text-[10px] text-muted-foreground">({agent.role})</span>
+              )}
             </div>
           ))}
-          <button className="px-2 py-1.5 border border-dashed border-border rounded text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors">
-            <Plus size={14} className="inline mr-1" />添加代理
-          </button>
         </div>
       </div>
 

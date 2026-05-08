@@ -7,15 +7,14 @@ import { MessageSquarePlus, MoreHorizontal, Trash2, PanelLeftClose, PanelLeft, S
 import { ConversationSearch } from '../ConversationSearch'
 import { DeleteConfirmDialog } from '../ConversationDeleteConfirm'
 import { TodoList } from '../TodoList'
-import { NewTaskDialog } from '../NewTaskDialog'
 import { useMemoryStore } from '../../stores/memoryStore'
 
 export function Sidebar() {
   const conversations = useChatStore((s) => s.conversations)
   const currentConversation = useChatStore((s) => s.currentConversation)
-  const createConversation = useChatStore((s) => s.createConversation)
   const deleteConversation = useChatStore((s) => s.deleteConversation)
   const loadConversations = useChatStore((s) => s.loadConversations)
+  const openNewTaskDialog = useChatStore((s) => s.openNewTaskDialog)
   const sidebarOpen = useUIStore((s) => s.sidebarOpen)
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
   const theme = useUIStore((s) => s.theme)
@@ -37,8 +36,6 @@ export function Sidebar() {
   const loadCandidates = useMemoryStore((s) => s.loadCandidates)
   const approveCandidate = useMemoryStore((s) => s.approveCandidate)
   const rejectCandidate = useMemoryStore((s) => s.rejectCandidate)
-  const [newTaskOpen, setNewTaskOpen] = useState(false)
-
   useEffect(() => {
     loadWorkspaces()
   }, [])
@@ -70,19 +67,6 @@ export function Sidebar() {
   const handlePickFolder = async () => {
     const dir = await window.api.dialog.openDirectory()
     if (dir) setNewWorkspacePath(dir)
-  }
-
-  const handleNewTaskSelect = (mode: 'solo' | 'team', teamId?: string, taskId?: string) => {
-    setNewTaskOpen(false)
-    void createConversation({
-      title: mode === 'team' ? 'Team Session' : 'New Chat',
-      workspace_id: currentWorkspaceId || undefined,
-      is_draft: 1,
-      team_id: teamId,
-      task_id: taskId
-    }).then((conv) => {
-      if (conv?.id) navigate(`/chat/${conv.id}`)
-    })
   }
 
   const handleConfirmDelete = async () => {
@@ -183,7 +167,7 @@ export function Sidebar() {
 
       <div className="px-3 pb-2">
         <button
-          onClick={() => setNewTaskOpen(true)}
+          onClick={openNewTaskDialog}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-sm"
         >
           <MessageSquarePlus size={14} />
@@ -281,11 +265,7 @@ export function Sidebar() {
         onCancel={() => setDeleteTargetId(null)}
       />
 
-      <NewTaskDialog
-        open={newTaskOpen}
-        onSelect={handleNewTaskSelect}
-        onCancel={() => setNewTaskOpen(false)}
-      />
+
 
     </aside>
   )

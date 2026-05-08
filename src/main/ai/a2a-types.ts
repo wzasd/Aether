@@ -1,10 +1,38 @@
 export const MAX_DELEGATION_DEPTH = 5
 export const MAX_TASKS_PER_CONVERSATION = 20
+export const OPEN_FLOOR_TIMEOUT_MS = 5 * 60 * 1000  // 5 minute discussion window
 
 export type A2AStatus = 'pending' | 'working' | 'completed' | 'failed'
 export type ExecutionMode = 'serial' | 'parallel'
+export type CollaborationMode = 'orchestrated' | 'open_floor'
+export type PermissionMode = 'manual' | 'autoEdit' | 'plan' | 'fullAuto' | 'trusted'
 
 export type ReflowState = 'pending' | 'running' | 'partial' | 'done' | 'timeout' | 'failed'
+
+export interface Observation {
+  conversationId: string
+  message: string
+  context: Array<{ role: string; content: string }>
+  collaborationMode: 'open_floor'
+}
+
+export interface OpenFloorResponse {
+  agentId: string
+  agentName: string
+  content: string
+  timestamp: number
+  relevanceScore: number
+}
+
+export interface OpenFloorState {
+  conversationId: string
+  status: 'active' | 'closing' | 'closed'
+  startTime: number
+  endTime?: number
+  responses: OpenFloorResponse[]
+  pendingAgents: string[]
+  skippedAgents: string[]
+}
 
 export interface PartialResult {
   fromProfileId: string

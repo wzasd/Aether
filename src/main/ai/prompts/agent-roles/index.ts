@@ -13,6 +13,9 @@ import { CODEX_SYSTEM_PROMPT } from "./codex"
 import { OPENCODE_SYSTEM_PROMPT } from "./opencode"
 import { PLANNER_SYSTEM_PROMPT } from "./planner"
 import { ARCHITECT_SYSTEM_PROMPT } from "./architect"
+import { TESTER_SYSTEM_PROMPT } from "./tester"
+import { DEVOPS_SYSTEM_PROMPT } from "./devops"
+import { SECURITY_SYSTEM_PROMPT } from "./security"
 
 /** Maps preset profile IDs to their canonical system prompt. */
 export const PROMPT_REGISTRY: Record<string, string> = {
@@ -21,6 +24,9 @@ export const PROMPT_REGISTRY: Record<string, string> = {
   "opencode-ui": OPENCODE_SYSTEM_PROMPT,
   planner: PLANNER_SYSTEM_PROMPT,
   architect: ARCHITECT_SYSTEM_PROMPT,
+  tester: TESTER_SYSTEM_PROMPT,
+  devops: DEVOPS_SYSTEM_PROMPT,
+  "security-engineer": SECURITY_SYSTEM_PROMPT,
 }
 
 /** Get the system prompt for a preset agent profile. Returns undefined for non-preset profiles. */
@@ -35,4 +41,7 @@ export {
   OPENCODE_SYSTEM_PROMPT,
   PLANNER_SYSTEM_PROMPT,
   ARCHITECT_SYSTEM_PROMPT,
+  TESTER_SYSTEM_PROMPT,
+  DEVOPS_SYSTEM_PROMPT,
+  SECURITY_SYSTEM_PROMPT,
 }

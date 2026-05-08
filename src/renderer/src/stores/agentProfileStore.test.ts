@@ -57,7 +57,7 @@ const mockProfiles: AgentProfileConfig[] = [
 ]
 
 beforeEach(() => {
-  useAgentProfileStore.setState({ profiles: [], activeProfileId: null })
+  useAgentProfileStore.setState({ profiles: [] })
   vi.stubGlobal('window', {
     api: {
       agent: {
@@ -94,10 +94,6 @@ describe('agentProfileStore', () => {
   describe('initial state', () => {
     it('has empty profiles', () => {
       expect(useAgentProfileStore.getState().profiles).toEqual([])
-    })
-
-    it('has null activeProfileId', () => {
-      expect(useAgentProfileStore.getState().activeProfileId).toBeNull()
     })
   })
 
@@ -161,42 +157,15 @@ describe('agentProfileStore', () => {
   })
 
   describe('deleteProfile', () => {
-    it('removes profile and resets activeProfileId if it was selected', async () => {
+    it('removes profile from state', async () => {
       useAgentProfileStore.setState({
-        profiles: [...mockProfiles],
-        activeProfileId: 'p2'
+        profiles: [...mockProfiles]
       })
 
       await useAgentProfileStore.getState().deleteProfile('p2')
 
       const state = useAgentProfileStore.getState()
       expect(state.profiles).toHaveLength(2)
-      expect(state.activeProfileId).toBeNull()
-    })
-
-    it('keeps activeProfileId when deleting a different profile', async () => {
-      useAgentProfileStore.setState({
-        profiles: [...mockProfiles],
-        activeProfileId: 'p1'
-      })
-
-      await useAgentProfileStore.getState().deleteProfile('p2')
-
-      const state = useAgentProfileStore.getState()
-      expect(state.activeProfileId).toBe('p1')
-    })
-  })
-
-  describe('setActiveProfile', () => {
-    it('sets activeProfileId', () => {
-      useAgentProfileStore.getState().setActiveProfile('p1')
-      expect(useAgentProfileStore.getState().activeProfileId).toBe('p1')
-    })
-
-    it('allows null to deselect', () => {
-      useAgentProfileStore.setState({ activeProfileId: 'p1' })
-      useAgentProfileStore.getState().setActiveProfile(null)
-      expect(useAgentProfileStore.getState().activeProfileId).toBeNull()
     })
   })
 

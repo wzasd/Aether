@@ -14,6 +14,7 @@ import { registerOrchestratorIpc } from './orchestrator'
 import { registerUpdateIpc } from './update'
 import { registerMcpIpc } from './mcp'
 import { registerTeamIpc } from './team'
+import { registerLogsIpc } from './logs'
 
 export function registerIpcHandlers(): void {
   registerSystemIpc()
@@ -32,4 +33,5 @@ export function registerIpcHandlers(): void {
   registerUpdateIpc()
   registerMcpIpc()
   registerTeamIpc()
+  registerLogsIpc()
 }

@@ -1,11 +1,13 @@
 import { app, BrowserWindow, dialog } from 'electron'
 import { join } from 'path'
 import { closeDatabase, initDatabase } from './core/db'
+import { createLogger, installConsoleLogBridge } from './core/logging'
 import { registerIpcHandlers } from './ipc'
 import { safeOpenExternal } from './utils/external'
 import { checkForUpdatesSilent } from './ipc/update'
 
 let mainWindow: BrowserWindow | null = null
+const logger = createLogger('app')
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -50,6 +52,8 @@ app.whenReady().then(() => {
   }
 
   app.setAppUserModelId('com.bytro.app')
+  installConsoleLogBridge('app')
+  logger.info('App starting', { version: app.getVersion(), packaged: app.isPackaged })
 
   try {
     initDatabase()
@@ -80,6 +84,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  logger.info('All windows closed')
   closeDatabase()
   if (process.platform !== 'darwin') {
     app.quit()

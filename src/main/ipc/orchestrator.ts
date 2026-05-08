@@ -1,14 +1,15 @@
 import { ipcMain } from 'electron'
 import { orchestrator } from '../ai/orchestrator'
 import type { SessionConfig } from '../ai/provider'
-import type { ExecutionMode } from '../ai/a2a-types'
+import type { ExecutionMode, CollaborationMode } from '../ai/a2a-types'
 import type { PermissionMode } from '../ai/types'
 import { providerRegistry } from '../ai/provider-registry'
 import { existsSync, statSync } from 'fs'
 import { resolve } from 'path'
 
-const PERMISSION_MODES = new Set(['manual', 'autoEdit', 'plan', 'fullAuto'])
+const PERMISSION_MODES = new Set(['manual', 'autoEdit', 'plan', 'fullAuto', 'trusted'])
 const EXECUTION_MODES = new Set<ExecutionMode>(['serial', 'parallel'])
+const COLLABORATION_MODES = new Set<CollaborationMode>(['orchestrated', 'open_floor'])
 const MAX_CONTENT_LENGTH = 200_000
 
 function validatePayload(payload: unknown): {
@@ -19,6 +20,7 @@ function validatePayload(payload: unknown): {
   executionMode: ExecutionMode
   overrides?: { providerType?: string; model?: string }
   initialMentions?: string
+  collaborationMode?: CollaborationMode
 } {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Invalid payload')
@@ -84,12 +86,17 @@ function validatePayload(payload: unknown): {
 
   const initialMentions = typeof p.initialMentions === 'string' ? p.initialMentions.slice(0, 20_000) : undefined
 
-  return { conversationId, profileId, content, sessionConfig, executionMode, overrides: validatedOverrides, initialMentions }
+  const collaborationMode: CollaborationMode | undefined =
+    typeof p.collaborationMode === 'string' && COLLABORATION_MODES.has(p.collaborationMode as CollaborationMode)
+      ? (p.collaborationMode as CollaborationMode)
+      : undefined
+
+  return { conversationId, profileId, content, sessionConfig, executionMode, overrides: validatedOverrides, initialMentions, collaborationMode }
 }
 
 export function registerOrchestratorIpc(): void {
   ipcMain.handle('orchestrator:sendMessage', async (event, payload: unknown) => {
-    const { conversationId, profileId, content, sessionConfig, executionMode, overrides, initialMentions } = validatePayload(payload)
+    const { conversationId, profileId, content, sessionConfig, executionMode, overrides, initialMentions, collaborationMode } = validatePayload(payload)
     await orchestrator.sendUserMessage(
       conversationId,
       profileId,
@@ -98,7 +105,8 @@ export function registerOrchestratorIpc(): void {
       executionMode,
       event.sender,
       overrides,
-      initialMentions
+      initialMentions,
+      collaborationMode
     )
   })
 
@@ -109,16 +117,16 @@ export function registerOrchestratorIpc(): void {
     orchestrator.abort(conversationId)
   })
 
-  ipcMain.handle('orchestrator:respondPermission', (_event, conversationId: string, approved: boolean) => {
+  ipcMain.handle('orchestrator:respondPermission', (_event, conversationId: string, approved: boolean, profileId?: string, taskId?: string) => {
     if (typeof conversationId !== 'string' || !conversationId.trim()) throw new Error('Invalid conversationId')
     if (typeof approved !== 'boolean') throw new Error('Invalid approved')
-    orchestrator.respondPermission(conversationId, approved)
+    orchestrator.respondPermission(conversationId, approved, profileId ?? 'default', taskId)
   })
 
-  ipcMain.handle('orchestrator:respondQuestion', (_event, conversationId: string, answer: string) => {
+  ipcMain.handle('orchestrator:respondQuestion', (_event, conversationId: string, answer: string, profileId?: string, taskId?: string) => {
     if (typeof conversationId !== 'string' || !conversationId.trim()) throw new Error('Invalid conversationId')
     if (typeof answer !== 'string') throw new Error('Invalid answer')
-    orchestrator.respondQuestion(conversationId, answer)
+    orchestrator.respondQuestion(conversationId, answer, profileId ?? 'default', taskId)
   })
 
   ipcMain.handle('orchestrator:getActiveTasks', (_event, conversationId: string) => {
@@ -126,6 +134,13 @@ export function registerOrchestratorIpc(): void {
       throw new Error('Invalid conversationId')
     }
     return orchestrator.getActiveTasks(conversationId)
+  })
+
+  ipcMain.handle('orchestrator:stopOpenFloor', (_event, conversationId: string) => {
+    if (typeof conversationId !== 'string' || !conversationId.trim()) {
+      throw new Error('Invalid conversationId')
+    }
+    orchestrator.stopOpenFloor(conversationId)
   })
 
   ipcMain.handle('task:getActiveGraph', (_event, conversationId: string) => {

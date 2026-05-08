@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import Database from 'better-sqlite3'
+
+let BetterSqlite3: typeof import('better-sqlite3') | null = null
+try {
+  const mod = require('better-sqlite3')
+  new mod(':memory:').close()
+  BetterSqlite3 = mod
+} catch {
+  BetterSqlite3 = null
+}
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS project_memory_items (
@@ -49,7 +57,7 @@ const UPDATE = `
 UPDATE project_memory_items SET title = 'New Title', content = 'Updated content' WHERE id = 'mem-1'
 `
 
-function recall(ftsQuery: string, db: Database.Database) {
+function recall(ftsQuery: string, db: import('better-sqlite3').Database) {
   return db.prepare(`
     SELECT pmi.* FROM memory_fts ft
     JOIN project_memory_items pmi ON ft.rowid = pmi.rowid
@@ -58,11 +66,11 @@ function recall(ftsQuery: string, db: Database.Database) {
   `).all(ftsQuery)
 }
 
-describe('memory_fts sync', () => {
-  let db: Database.Database
+describe.skipIf(!BetterSqlite3)('memory_fts sync', () => {
+  let db: import('better-sqlite3').Database
 
   beforeAll(() => {
-    db = new Database(':memory:')
+    db = new BetterSqlite3!(':memory:')
     db.exec(SCHEMA)
   })
 

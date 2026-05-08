@@ -2,10 +2,11 @@ import { EventEmitter } from 'events'
 import { aiEngine } from './engine'
 import { scanAgentOutput } from './agent-output-scanner'
 import { resolveRuntime } from './runtime-resolver'
-import type { AgentProfile } from './a2a-types'
+import type { AgentProfile, Observation } from './a2a-types'
 import type { SessionConfig, Session } from './provider'
 import type { AIEvent } from './types'
 import type { ParsedMention } from './a2a-types'
+import { OPEN_FLOOR_INSTRUCTION, OPEN_FLOOR_ALLOWED_TOOLS } from './prompts/open-floor'
 
 export interface AgentMentionEvent {
   type: 'agent_mention'
@@ -16,12 +17,44 @@ export interface AgentMentionEvent {
 
 export type AgentRuntimeEvent = AIEvent | AgentMentionEvent
 
+export function assessOpenFloorRelevance(params: {
+  topic: string
+  myCapabilities: string[]
+  myInterests: string
+}): { score: number } {
+  const topicLower = params.topic.toLowerCase()
+
+  // Capability match: does the topic contain any of my capability keywords?
+  const capabilityMatch = params.myCapabilities.some((cap) =>
+    topicLower.includes(cap.toLowerCase())
+  )
+
+  // Interest match: does my whenToUse overlap with the topic? For CJK topics,
+  // also allow the shorter topic phrase to be contained in the longer interest text.
+  const interestTokens = params.myInterests
+    .toLowerCase()
+    .split(/[\s,，、。；;：:（）()]+/)
+    .filter((t) => t.length > 1)
+  const interestMatch = interestTokens.some((token) =>
+    topicLower.includes(token) || token.includes(topicLower)
+  )
+
+  let score = 0.35 // Default opt-in floor for Open Floor so discussions do not dead-end.
+  if (capabilityMatch) score += 0.4
+  if (interestMatch) score += 0.25
+
+  return { score: Math.min(1, score) }
+}
+
 export class AgentRuntime extends EventEmitter {
   readonly profile: AgentProfile
   private session: Session | null = null
   private knownAgents: AgentProfile[] = []
   private agentCardSection: string = ''
   private eventHandler: ((event: AIEvent) => void) | null = null
+  private lastWorkingDir: string = ''
+  private lastProviderType: string = ''
+  private observationSessionId: string | null = null
 
   constructor(profile: AgentProfile) {
     super()
@@ -37,6 +70,9 @@ export class AgentRuntime extends EventEmitter {
   }
 
   async start(config: SessionConfig, overrides?: { providerType?: string; model?: string }): Promise<Session> {
+    this.lastWorkingDir = config.workingDir
+    this.lastProviderType = config.providerType
+
     const systemPromptParts: string[] = []
 
     if (this.profile.systemPrompt) {
@@ -116,9 +152,123 @@ export class AgentRuntime extends EventEmitter {
   }
 
   abort(): void {
-    if (!this.session) return
-    aiEngine.abort(this.session.id)
+    if (this.session) aiEngine.abort(this.session.id)
+    if (this.observationSessionId) {
+      aiEngine.abort(this.observationSessionId)
+      this.observationSessionId = null
+    }
   }
+
+  // ─── Open Floor / Observation Mode ─────────────────────────────────────────
+
+  async onObservation(obs: Observation): Promise<{ reply?: string; relevanceScore: number }> {
+    // Compute relevance for UI display and diagnostics only — not a hard gate.
+    // The agent's LLM decides whether to participate via its Open Floor system prompt.
+    const relevance = await this.assessRelevance({
+      topic: obs.message,
+      myCapabilities: this.profile.capabilities ?? [],
+      myInterests: this.profile.whenToUse ?? '',
+    })
+
+    // Always attempt to generate a reply — the agent's LLM self-judges relevance.
+    try {
+      const raw = await this.generateObservationReply(obs)
+      const trimmed = raw?.trim() ?? ''
+      // Normalize machine-readable sentinels: NO_REPLY / [NO_REPLY] / empty → silent
+      if (trimmed === 'NO_REPLY' || trimmed === '[NO_REPLY]' || trimmed === '') {
+        return { relevanceScore: relevance.score }
+      }
+      return { reply: raw, relevanceScore: relevance.score }
+    } catch {
+      return { relevanceScore: relevance.score }
+      // Swallow generation errors — orchestrator will record as skipped
+    }
+  }
+
+  private async generateObservationReply(obs: Observation): Promise<string> {
+    // Start a temporary session for the observation response.
+    // Uses cached workingDir/providerType from the last start() call.
+    const resolved = resolveRuntime(
+      this.profile.id === 'default' ? null : this.profile,
+      {
+        providerType: this.lastProviderType,
+        model: this.profile.model,
+      },
+      undefined
+    )
+
+    // Assemble the Open Floor instruction with context
+    const systemPromptParts: string[] = []
+
+    if (this.profile.systemPrompt) {
+      systemPromptParts.push(this.profile.systemPrompt)
+    }
+    systemPromptParts.push(OPEN_FLOOR_INSTRUCTION)
+
+    const otherAgents = this.knownAgents.filter((a) => a.id !== this.profile.id)
+    if (otherAgents.length > 0) {
+      const agentCards = otherAgents
+        .map((a) => {
+          const whenToUse = a.whenToUse ?? 'No description available'
+          const capabilities = a.capabilities?.length ? a.capabilities.join(', ') : 'No capability tags'
+          return `@${a.name} (${a.role}): ${capabilities} — ${whenToUse}`
+        })
+        .join('\n')
+      systemPromptParts.push(`其他参与者：\n${agentCards}\n\n如果需要追问特定 Agent，可以 @AgentName: 你的问题`)
+    }
+
+    const fullConfig: SessionConfig = {
+      providerType: resolved.providerType,
+      model: resolved.model,
+      workingDir: this.lastWorkingDir,
+      permissionMode: 'trusted',
+      appendSystemPrompt: systemPromptParts.join('\n\n'),
+    }
+
+    // Build the full message content
+    const contextText = obs.context
+      .map((m) => `[${m.role}]: ${m.content}`)
+      .join('\n')
+    const messageContent = [
+      `## 讨论上下文\n\n${contextText}`,
+      `\n---\n\n## 当前话题\n\n${obs.message}`,
+      `\n\n请根据你的角色 @${this.profile.name}（${this.profile.role}）判断：这个话题你是否应该参与？如果参与，请从你的专业视角给出简短观点。记住：只说你真正有把握的，3-5 句话即可。`,
+    ].join('\n')
+
+    const tempSession = await aiEngine.startSession(fullConfig)
+    this.observationSessionId = tempSession.id
+    try {
+      let reply = ''
+      await new Promise<void>((resolve) => {
+        const handler = (event: AIEvent): void => {
+          if (event.type === 'complete' && event.fullText) {
+            reply = event.fullText as string
+          }
+          if (event.type === 'done' || event.type === 'error') {
+            aiEngine.offEvent(tempSession.id, handler)
+            resolve()
+          }
+        }
+        aiEngine.onEvent(tempSession.id, handler)
+        aiEngine.sendMessage(tempSession.id, messageContent)
+      })
+
+      return reply || ''
+    } finally {
+      this.observationSessionId = null
+      await aiEngine.endSession(tempSession.id).catch(() => {})
+    }
+  }
+
+  private async assessRelevance(params: {
+    topic: string
+    myCapabilities: string[]
+    myInterests: string
+  }): Promise<{ score: number }> {
+    return assessOpenFloorRelevance(params)
+  }
+
+  // ─── Session lifecycle ─────────────────────────────────────────────────────
 
   async dispose(): Promise<void> {
     if (!this.session) return

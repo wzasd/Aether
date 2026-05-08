@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseMentions, hasMentions } from './mention-parser'
+import { parseMentions, hasMentions, stripMentionSegments } from './mention-parser'
 
 const KNOWN = ['Coder', 'Planner', 'Reviewer']
 
@@ -18,6 +18,18 @@ describe('parseMentions', () => {
     expect(result[0]).toEqual({ agentName: 'Coder', taskContent: 'write a function' })
   })
 
+  it('parses a single mention with space-delimited task content', () => {
+    const result = parseMentions('@Coder write a function', KNOWN)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toEqual({ agentName: 'Coder', taskContent: 'write a function' })
+  })
+
+  it('parses a single mention with a Chinese colon delimiter', () => {
+    const result = parseMentions('@Coder：写一个函数', KNOWN)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toEqual({ agentName: 'Coder', taskContent: '写一个函数' })
+  })
+
   it('parses a single mention after whitespace', () => {
     const result = parseMentions('hey there @Coder: fix the bug', KNOWN)
     expect(result).toHaveLength(1)
@@ -31,6 +43,14 @@ describe('parseMentions', () => {
     expect(result).toHaveLength(2)
     expect(result[0].agentName).toBe('Planner')
     expect(result[1].agentName).toBe('Coder')
+  })
+
+  it('parses multiple space-delimited mentions', () => {
+    const text = '@Planner plan the feature\n@Coder implement it'
+    const result = parseMentions(text, KNOWN)
+    expect(result).toHaveLength(2)
+    expect(result[0]).toEqual({ agentName: 'Planner', taskContent: 'plan the feature' })
+    expect(result[1]).toEqual({ agentName: 'Coder', taskContent: 'implement it' })
   })
 
   it('is case-insensitive for agent names', () => {
@@ -74,7 +94,25 @@ describe('hasMentions', () => {
     expect(hasMentions('@Coder: do it', KNOWN)).toBe(true)
   })
 
+  it('returns true for space-delimited mentions', () => {
+    expect(hasMentions('@Coder do it', KNOWN)).toBe(true)
+  })
+
   it('returns false when no mentions present', () => {
     expect(hasMentions('no mentions here', KNOWN)).toBe(false)
+  })
+})
+
+describe('stripMentionSegments', () => {
+  it('removes colon-delimited mention tasks from primary content', () => {
+    expect(stripMentionSegments('primary text @Coder: delegated task')).toBe('primary text')
+  })
+
+  it('removes space-delimited mention tasks from primary content', () => {
+    expect(stripMentionSegments('@Coder delegated task')).toBe('')
+  })
+
+  it('removes multiple mention task segments', () => {
+    expect(stripMentionSegments('primary @Planner plan it @Coder build it')).toBe('primary')
   })
 })

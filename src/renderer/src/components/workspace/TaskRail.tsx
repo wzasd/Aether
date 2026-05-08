@@ -59,7 +59,6 @@ export function TaskRail({ onToggleCollapse, onNewConversation, onSelectConversa
   const mappedFilter = filter === 'completed' ? 'done' : filter === 'pending' ? 'active' : filter
 
   const filteredTasks = conversations.filter((conv) => {
-    if (conv.is_draft) return false
     if (mappedFilter === 'all') return true
     if (mappedFilter === 'active') return conv.status === 'Running' || conv.status === 'Waiting'
     if (mappedFilter === 'done') return conv.status === 'Done' || conv.status === 'Error'

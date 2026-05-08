@@ -2,7 +2,6 @@ import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useChatStore } from '../stores/chatStore'
 import { useUIStore } from '../stores/uiStore'
-import { useWorkspaceStore } from '../stores/workspaceStore'
 
 function isEditableTarget(target: HTMLElement): boolean {
   const tag = target.tagName
@@ -13,6 +12,7 @@ function isEditableTarget(target: HTMLElement): boolean {
 export function useKeyboardShortcuts(
   onOpenSettings: () => void,
   onOpenMemory: () => void,
+  onNewConversation: () => void,
 ) {
   const navigate = useNavigate()
 
@@ -52,10 +52,7 @@ export function useKeyboardShortcuts(
       // Cmd+N: New conversation
       if (isMod && e.key === 'n' && !e.shiftKey) {
         e.preventDefault()
-        const wsId = useWorkspaceStore.getState().currentWorkspaceId ?? undefined
-        void useChatStore.getState().createConversation({ title: 'New Task', workspace_id: wsId }).then((conv) => {
-          if (conv?.id) navigate(`/chat/${conv.id}`)
-        })
+        onNewConversation()
         return
       }
 
@@ -153,5 +150,5 @@ export function useKeyboardShortcuts(
 
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [navigate, onOpenSettings, onOpenMemory])
+  }, [navigate, onOpenSettings, onOpenMemory, onNewConversation])
 }

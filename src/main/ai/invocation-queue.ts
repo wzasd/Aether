@@ -29,6 +29,8 @@ export class InvocationQueue {
   private zombieCheckInterval?: ReturnType<typeof setInterval>
   /** Tracks idempotency keys currently in queue per conversation */
   private idempotencyKeys = new Map<string, Set<string>>() // conversationId -> Set<key>
+  /** Tracks parallel (non-queued) task start times for zombie defense. Key: taskId */
+  private parallelStartTimes = new Map<string, { conversationId: string; startedAt: number }>()
 
   STALE_THRESHOLD_MS = 10 * 60 * 1000 // 10 minutes
 
@@ -96,6 +98,16 @@ export class InvocationQueue {
     this.processing.delete(conversationId)
   }
 
+  // ─── Parallel task tracking (zombie defense for non-queued tasks) ──────────
+
+  trackParallel(conversationId: string, taskId: string): void {
+    this.parallelStartTimes.set(taskId, { conversationId, startedAt: Date.now() })
+  }
+
+  untrackParallel(taskId: string): void {
+    this.parallelStartTimes.delete(taskId)
+  }
+
   getProcessingTaskId(conversationId: string): string | undefined {
     return this.processing.get(conversationId)?.taskId
   }
@@ -136,6 +148,12 @@ export class InvocationQueue {
     this.queues.delete(conversationId)
     this.processing.delete(conversationId)
     this.idempotencyKeys.delete(conversationId)
+    // Also clean up parallel tracking entries for this conversation
+    for (const [taskId, entry] of Array.from(this.parallelStartTimes.entries())) {
+      if (entry.conversationId === conversationId) {
+        this.parallelStartTimes.delete(taskId)
+      }
+    }
   }
 
   getAllConversationIds(): string[] {
@@ -155,12 +173,25 @@ export class InvocationQueue {
 
     this.zombieCheckInterval = setInterval(() => {
       const now = Date.now()
+      // Check serial (queued) tasks
       for (const [conversationId, proc] of Array.from(this.processing.entries())) {
         const { taskId, startedAt } = proc
         const status = getTaskStatus(taskId)
         if (status !== 'working') continue
 
         const elapsed = now - startedAt
+        if (elapsed > this.STALE_THRESHOLD_MS) {
+          onZombieDetected(taskId)
+        }
+      }
+      // Check parallel (non-queued) tasks
+      for (const [taskId, entry] of Array.from(this.parallelStartTimes.entries())) {
+        const status = getTaskStatus(taskId)
+        if (status !== 'working') {
+          this.parallelStartTimes.delete(taskId)
+          continue
+        }
+        const elapsed = now - entry.startedAt
         if (elapsed > this.STALE_THRESHOLD_MS) {
           onZombieDetected(taskId)
         }

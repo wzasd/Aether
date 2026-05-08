@@ -17,8 +17,8 @@ const CODEX_META: ProviderMeta = {
   permissionFlags: {
     manual: [],
     autoEdit: [],
-    plan: ['--no-git-commit'],
-    fullAuto: ['-a']
+    plan: [],
+    fullAuto: []
   },
   supportsStreamJson: true,
   supportsInteractive: true
@@ -28,7 +28,7 @@ export class CodexCLIProvider extends BaseCLIProvider {
   readonly meta = CODEX_META
 
   protected buildStreamJsonArgs(config: SessionConfig, resume: boolean): string[] {
-    const args = ['exec', '--json', '--model', config.model]
+    const args = ['exec', '--json', '--model', config.model, '--skip-git-repo-check']
 
     if (resume && config.sessionId) {
       // Codex resume is a subcommand: `codex resume <id>` — handled by startSession override if needed

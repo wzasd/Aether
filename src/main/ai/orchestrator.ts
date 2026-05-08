@@ -157,6 +157,14 @@ class AgentOrchestrator {
 
     // Open Floor branch: broadcast to all team agents, skip normal pipeline
     if (mode === 'open_floor') {
+      // Stop any active Open Floor for this conversation before starting a new round.
+      // Without this, the old state/runtimes leak and the new executeOpenFloor
+      // overwrites the AbortController, making the previous round unstoppable.
+      const prevState = this.openFloorStates.get(conversationId)
+      if (prevState?.status === 'active') {
+        this.stopOpenFloor(conversationId)
+      }
+      this.baseConfigs.set(conversationId, sessionConfig)
       await this.executeOpenFloor(conversationId, content, webContents)
       return
     }
@@ -548,6 +556,12 @@ class AgentOrchestrator {
 
     state.pendingAgents = profiles.map((p) => p.id)
 
+    // Use Sets for thread-safe tracking across concurrent agent promises.
+    // Avoids O(n²) array filter calls and the risk of interleaved reads/writes
+    // when multiple promises complete at roughly the same time.
+    const completedAgents = new Set<string>()
+    const skippedAgentsSet = new Set<string>()
+
     // Build full conversation context
     const context = await this.buildConversationContext(conversationId)
 
@@ -571,11 +585,11 @@ class AgentOrchestrator {
           if (baseConfig) {
             await runtime.start(baseConfig).catch(() => {
               // If start fails, agent can't participate — silently skip
-              state.skippedAgents.push(profile.id)
+              skippedAgentsSet.add(profile.id)
               return
             })
           } else {
-            state.skippedAgents.push(profile.id)
+            skippedAgentsSet.add(profile.id)
             return
           }
 
@@ -598,10 +612,9 @@ class AgentOrchestrator {
               timestamp: Date.now(),
               relevanceScore: result.relevanceScore,
             })
-            state.pendingAgents = state.pendingAgents.filter((id) => id !== profile.id)
+            completedAgents.add(profile.id)
           } else {
-            state.skippedAgents.push(profile.id)
-            state.pendingAgents = state.pendingAgents.filter((id) => id !== profile.id)
+            skippedAgentsSet.add(profile.id)
           }
         } finally {
           // Clean up the runtime and remove from registry
@@ -609,8 +622,7 @@ class AgentOrchestrator {
           this.runtimes.delete(key)
         }
       } catch {
-        state.skippedAgents.push(profile.id)
-        state.pendingAgents = state.pendingAgents.filter((id) => id !== profile.id)
+        skippedAgentsSet.add(profile.id)
       }
     })
 
@@ -625,6 +637,10 @@ class AgentOrchestrator {
         })
       }),
     ])
+
+    // Sync Set-based tracking back to state arrays for downstream readers
+    state.pendingAgents = profiles.map((p) => p.id).filter((id) => !completedAgents.has(id) && !skippedAgentsSet.has(id))
+    state.skippedAgents = Array.from(skippedAgentsSet)
 
     // Mark closed
     state.status = 'closed'

@@ -20,6 +20,12 @@ This directory is the record system for Bytro. Agents should start here, then re
 |------|------------|-----------|
 | Runtime/build/Electron issue | `architecture/runtime.md` | related review docs |
 | Claude CLI / streaming / tools | `architecture/ai-provider.md` | `modules/ai-provider.md`, active review |
+| Agent collaboration / runtime discovery reference | `architecture/multica-agent-collaboration-reference.md` | `architecture/multi-agent-a2a-orchestration.md`, `architecture/acp-protocol-leverage.md` |
+| Agent communication patterns reference | `architecture/slock-agent-communication-reference.md` | `architecture/multi-agent-a2a-orchestration.md`, `architecture/decisions/session-layer-adrs.md` |
+| Session layer fixes / observability | `architecture/decisions/session-layer-adrs.md` | `architecture/session-bug-fixes.md`, `architecture/observability-logging.md`, `src/main/core/logging.ts`, `src/main/ai/orchestrator.ts` |
+| Session-Context-Memory refactoring | `architecture/bytro-refactoring-plan.md` | `architecture/decisions/session-layer-adrs.md`, `architecture/memory-system.md`, `architecture/multi-agent-a2a-orchestration.md` |
+| Open Floor / dual-mode collaboration | `features/open-floor-collaboration-mode.md` | `architecture/bytro-refactoring-plan.md` Phase 4, `architecture/decisions/session-layer-adrs.md` ADR-009/010 |
+| Permission model / approval architecture | `architecture/decisions/session-layer-adrs.md` ADR-010 | `architecture/observability-logging.md`, `architecture/bytro-refactoring-plan.md` Phase 4 |
 | Memory / recall / agent sessions | `architecture/memory-system.md` | `specs/2026-04-29-bytro-memory-system-design.md` |
 | Functional requirements (active) | `specs/2026-04-30-functional-requirements.md` | module design docs in `design/modules/` |
 | Design spec reference | `design/mochi-design-reference.md` | `reviews/active/design-spec-gap-analysis.md` |
@@ -47,9 +53,16 @@ This directory is the record system for Bytro. Agents should start here, then re
 - `../ARCHITECTURE.md` — top-level architecture map.
 - `architecture/runtime.md` — Electron processes, CJS build constraints, IPC boundaries.
 - `architecture/ai-provider.md` — AI provider architecture and Claude CLI event flow.
+- `architecture/multica-agent-collaboration-reference.md` — Multica agent collaboration and dynamic model discovery reference, compared with Bytro Agent Space.
+- `architecture/slock-agent-communication-reference.md` — Slock agent communication model analysis as reference for bytro-app multi-agent architecture.
+- `architecture/decisions/session-layer-adrs.md` — ADR-005~010: session layer fixes (runtime key, permission routing, lifecycle cleanup, feedback context, mention parser) + observability integration + dual-mode collaboration (ADR-009) + layered permission model (ADR-010).
+- `architecture/session-bug-fixes.md` — 2026-05-08 session bug fixes summary: 6 bugs fixed (zombie defense, permission routing, runtime key collision, stale session resume, feedback context, mention parser), ADR decisions, verification results, lessons learned.
+- `architecture/observability-logging.md` — JSONL structured logging for agent runtime lifecycle covering 11 event types (task/runtime/permission/feedback/intent), IPC API (`logs:list`/`logs:read`), troubleshooting guide for "agent doesn't reply" and "permission stuck" scenarios.
+- `architecture/bytro-refactoring-plan.md` — **会话-上下文-记忆三模块联动重构计划**：现状评估、目标架构、模块映射、P0-P4 实施路线图（含 Phase 4 混合协作拓扑）。
 - `architecture/memory-system.md` — durable memory layers and read-model boundaries.
 - `architecture/ai-native-workspace.md` — task-first workspace architecture derived from the Figma Make prototype.
 - `architecture/workspace-surfaces-technology.md` — technology choices for Code Editor, Terminal/Output, and Preview.
+- `features/open-floor-collaboration-mode.md` — **Open Floor 协作模式 PRD**（Task #6）：双模协作流程、Agent 自主介入、分层权限、UI 调整、场景矩阵、实施计划。
 - `design/mochi-design-reference.md` — **设计规范单一真相来源**（字体/颜色/布局/组件/交互/Tailwind 规范）。
 - `design/ui-guidelines.md` — product feel, layout, components, visual rules.
 - `design/design-agent-workflow.md` — how agents should design, implement, and verify UI.
