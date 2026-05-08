@@ -23,16 +23,22 @@ export function AgentStatusBar({ conversationId }: AgentStatusBarProps) {
   const setPermissionMode = useSessionConfigStore((s) => s.setPermissionMode)
 
   const collaborationMode = useChatStore((s) => s.pendingCollaborationMode[conversationId])
+  const setPendingCollaborationMode = useChatStore((s) => s.setPendingCollaborationMode)
   const openFloorState = useChatStore((s) => s.openFloorStates[conversationId])
   const isOpenFloor = openFloorState?.status === 'active'
 
   const [permOpen, setPermOpen] = useState(false)
+  const [modeOpen, setModeOpen] = useState(false)
   const permRef = useRef<HTMLDivElement>(null)
+  const modeRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     function handler(e: MouseEvent) {
       if (permRef.current && !permRef.current.contains(e.target as Node)) {
         setPermOpen(false)
+      }
+      if (modeRef.current && !modeRef.current.contains(e.target as Node)) {
+        setModeOpen(false)
       }
     }
     document.addEventListener('mousedown', handler)
@@ -54,21 +60,61 @@ export function AgentStatusBar({ conversationId }: AgentStatusBarProps) {
 
       <div className="w-px h-3 bg-border mx-1" />
 
-      {/* Mode indicators */}
-      {isOpenFloor ? (
-        <div className="flex items-center gap-1 text-blue-400">
-          <Brain size={12} />
-          <span>Open Floor</span>
-          {openFloorState?.responses.length > 0 && (
-            <span className="text-muted-foreground">({openFloorState.responses.length})</span>
+      {/* Mode indicators — toggleable dropdown */}
+      <div ref={modeRef} className="relative">
+        <button
+          onClick={() => setModeOpen((v) => !v)}
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors ${
+            isOpenFloor || collaborationMode === 'open_floor'
+              ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20'
+              : 'text-muted-foreground hover:bg-secondary'
+          }`}
+        >
+          {isOpenFloor || collaborationMode === 'open_floor' ? (
+            <>
+              <Brain size={12} />
+              <span>Open Floor</span>
+              {openFloorState?.responses.length ? (
+                <span className="text-blue-400/70">({openFloorState.responses.length})</span>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Zap size={12} />
+              <span>Orchestrated</span>
+            </>
           )}
-        </div>
-      ) : collaborationMode === 'orchestrated' ? (
-        <div className="flex items-center gap-1 text-muted-foreground">
-          <Zap size={12} />
-          <span>Orchestrated</span>
-        </div>
-      ) : null}
+          <ChevronDown size={10} className={`transition-transform ${modeOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {modeOpen && (
+          <div className="absolute bottom-full right-0 mb-1 bg-card border border-border rounded-lg shadow-lg z-20 min-w-36 overflow-hidden">
+            <button
+              onClick={() => {
+                setPendingCollaborationMode(conversationId, 'open_floor')
+                setModeOpen(false)
+              }}
+              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-secondary transition-colors flex items-center gap-2 ${
+                (isOpenFloor || collaborationMode === 'open_floor') ? 'bg-secondary' : ''
+              }`}
+            >
+              <Brain size={12} className="text-blue-400" />
+              <span className="text-blue-400">Open Floor</span>
+            </button>
+            <button
+              onClick={() => {
+                setPendingCollaborationMode(conversationId, 'orchestrated')
+                setModeOpen(false)
+              }}
+              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-secondary transition-colors flex items-center gap-2 ${
+                (!isOpenFloor && collaborationMode !== 'open_floor') ? 'bg-secondary' : ''
+              }`}
+            >
+              <Zap size={12} className="text-muted-foreground" />
+              <span>Orchestrated</span>
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="w-px h-3 bg-border mx-1" />
 
