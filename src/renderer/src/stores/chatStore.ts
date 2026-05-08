@@ -1600,20 +1600,22 @@ export const useChatStore = create<ChatState>((set, get) => {
           // Also append a visible placeholder message in the chat so the user
           // sees each agent "thinking" rather than a black-box wait.
           if (state.currentConversation?.id === thinkingConvId) {
-            set((s) => {
-              if (s.currentConversation?.id !== thinkingConvId) return s
-              const placeholderId = `thinking-${event.agentProfileId}`
-              // Avoid duplicate placeholders if agent_thinking is received twice
-              if (s.messages.some((m) => m.id === placeholderId)) return s
-              const placeholder: Message = {
-                id: placeholderId,
-                conversation_id: thinkingConvId,
-                role: 'assistant',
-                content: `🧠 **${event.agentName}**${event.agentRole ? `（${event.agentRole}）` : ''} 思考中...`,
-                thinking: null,
-                created_at: Date.now(),
-              }
-              return { ...s, messages: [...s.messages, placeholder] }
+            flushSync(() => {
+              set((s) => {
+                if (s.currentConversation?.id !== thinkingConvId) return s
+                const placeholderId = `thinking-${event.agentProfileId}`
+                // Avoid duplicate placeholders if agent_thinking is received twice
+                if (s.messages.some((m) => m.id === placeholderId)) return s
+                const placeholder: Message = {
+                  id: placeholderId,
+                  conversation_id: thinkingConvId,
+                  role: 'assistant',
+                  content: `🧠 **${event.agentName}**${event.agentRole ? `（${event.agentRole}）` : ''} 思考中...`,
+                  thinking: null,
+                  created_at: Date.now(),
+                }
+                return { ...s, messages: [...s.messages, placeholder] }
+              })
             })
           }
           break
