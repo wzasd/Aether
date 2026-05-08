@@ -1590,10 +1590,17 @@ export const useChatStore = create<ChatState>((set, get) => {
             void window.api.message.create({
               conversation_id: obsConvId,
               role: 'assistant',
-              content: `**${event.agentName}** (relevance: ${Math.round((event.relevanceScore ?? 0) * 100)}%)\n\n${event.content}`,
+              content: `**${event.agentName}**\n\n${event.content}`,
               agent_profile_id: event.agentProfileId
             }).then((message) => {
-              appendMessageIfVisible(obsConvId, message as Message)
+              // Stagger message insertion so replies appear one-by-one instead of
+              // all at once. React 18 batches setState calls within the same
+              // microtask, and since agents finish at roughly the same time,
+              // we spread renders across ~400ms per message.
+              const delay = get().openFloorStates[obsConvId]?.responses.length * 400
+              setTimeout(() => {
+                appendMessageIfVisible(obsConvId, message as Message)
+              }, Math.min(delay, 2000))
             }).catch((err) => {
               console.error('Failed to create agent observation message:', err)
             })

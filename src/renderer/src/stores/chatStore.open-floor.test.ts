@@ -95,7 +95,7 @@ describe('chatStore Open Floor state', () => {
       expect.objectContaining({
         conversation_id: 'conv-a',
         role: 'assistant',
-        content: expect.stringContaining('relevance: 0%')
+        content: expect.stringContaining('**Coder**')
       })
     )
   })
