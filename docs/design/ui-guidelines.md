@@ -64,6 +64,14 @@ Every new UI feature should account for relevant states:
 - Tool calls: compact, collapsible, status visible.
 - Permission prompts: actionable, scoped to the active session.
 
+## Agent Settings Rules
+
+- Agent settings should separate `AgentProfile` metadata, prompt template preview, and routing capabilities.
+- Basic profile metadata (`name`, `role`, `provider`, `model`, `description`) is the high-frequency editable area.
+- Role templates should be read-only in Settings and clearly marked as `preset` or `custom`.
+- Capability routing fields (`capabilities`, `whenToUse`, `outputContract`) should be advanced and collapsed by default.
+- Preset/custom source detection should reuse the same preset profile ids as seed data; do not create a second Agent registry in the renderer.
+
 ## Verification
 
 For substantial UI changes:

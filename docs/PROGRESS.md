@@ -153,6 +153,10 @@ Bytro P0-P3 核心模块已完成。Phase A-J 已收尾。
   - SettingsAgents UI：`WorkspaceArea.tsx` 完整 CRUD（role select + description + capabilities tag input + whenToUse + outputContract），显示 role badge + capability chips
   - NewTaskDialog Solo 模式：水平 agent selector（Default + enabled profiles，圆形首字母头像 + role 色 + hover tooltip + 选中圆点指示），localStorage 记忆上次选择
   - Tests：`agentProfileStore.test.ts` mock 数据含新字段 + capabilities round-trip 测试
+- [x] **Agent Settings UI 规整（2026-05-08）**：
+  - Settings Agents 改为三块分层：基础信息（可编辑）、角色模板（只读预览 + preset/custom 来源标识）、能力配置（默认折叠）
+  - 预设 Agent 来源判断抽到 `src/utils/preset-profile-ids.ts`，renderer 与 preset seed 共用，避免重复 Agent 数据源
+  - system prompt 从常规编辑表单移出，Settings 只做模板预览；运行时仍由 profile metadata + prompt template + context 注入组装
 - [x] **Blocker 修复（2026-05-06）**：
   - P1-10/P1-15：`on-code-change` reviewer 竞态 — 已由 in-memory `fileChangeFlags` + `isFileTool()` 归一化修复（代码已有，review doc 更新）
   - P1-22：`agent:createProfile` SQL INSERT 15 列但只有 14 个占位符 → 补正
