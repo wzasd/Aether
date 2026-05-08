@@ -822,6 +822,7 @@ export const useChatStore = create<ChatState>((set, get) => {
               workingDir
             },
             executionMode: modeExecution,
+            collaborationMode,
             overrides: taskOverrides ?? undefined,
             initialMentions: initialMentions ?? undefined
           })
