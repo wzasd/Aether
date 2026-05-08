@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Paperclip } from 'lucide-react'
+import { Send, Paperclip, Cpu } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useMemoryStore } from '../../stores/memoryStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
@@ -27,6 +27,25 @@ function permissionToMode(permissionMode: PermissionMode): ChatMode {
 interface MentionSuggestion {
   id: string
   name: string
+  role: string
+}
+
+const ROLE_ICON_COLORS: Record<string, string> = {
+  planning:       'text-blue-400',
+  implementation: 'text-green-400',
+  review:         'text-orange-400',
+  ui:             'text-purple-400',
+  assistant:      'text-cyan-400',
+  coder:          'text-emerald-400',
+}
+
+const ROLE_BADGE_COLORS: Record<string, string> = {
+  planning:       'bg-blue-600/20 text-blue-400 border-blue-600/30',
+  implementation: 'bg-green-600/20 text-green-400 border-green-600/30',
+  review:         'bg-orange-600/20 text-orange-400 border-orange-600/30',
+  ui:             'bg-purple-600/20 text-purple-400 border-purple-600/30',
+  assistant:      'bg-cyan-600/20 text-cyan-400 border-cyan-600/30',
+  coder:          'bg-emerald-600/20 text-emerald-400 border-emerald-600/30',
 }
 
 export function ChatInput({ conversationId }: { conversationId: string }) {
@@ -80,7 +99,7 @@ export function ChatInput({ conversationId }: { conversationId: string }) {
   const filteredSuggestions: MentionSuggestion[] = mentionQuery !== null
     ? enabledProfiles.filter((p) =>
         p.name.toLowerCase().startsWith(mentionQuery.toLowerCase())
-      ).map((p) => ({ id: p.id, name: p.name }))
+      ).map((p) => ({ id: p.id, name: p.name, role: p.role }))
     : []
 
   const detectMentionQuery = (text: string, cursor: number): string | null => {
@@ -201,7 +220,10 @@ export function ChatInput({ conversationId }: { conversationId: string }) {
 
       {/* @mention suggestions popover */}
       {mentionQuery !== null && filteredSuggestions.length > 0 && (
-        <div className="absolute bottom-full left-0 mb-1 bg-card border border-border rounded-lg shadow-lg z-20 min-w-40 overflow-hidden">
+        <div className="absolute bottom-full left-0 mb-1 bg-card border border-border rounded-lg shadow-lg z-20 min-w-48 overflow-hidden">
+          <div className="px-3 py-1.5 border-b border-border">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Agent 提及</span>
+          </div>
           {filteredSuggestions.map((s, i) => (
             <button
               key={s.id}
@@ -209,9 +231,13 @@ export function ChatInput({ conversationId }: { conversationId: string }) {
                 e.preventDefault()
                 applyMention(s.name)
               }}
-              className={`w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-secondary ${i === mentionIndex ? 'bg-secondary' : ''}`}
+              className={`w-full text-left px-3 py-2 flex items-center gap-2.5 text-xs hover:bg-secondary transition-colors ${i === mentionIndex ? 'bg-secondary' : ''}`}
             >
-              @{s.name}
+              <Cpu size={12} className={`shrink-0 ${ROLE_ICON_COLORS[s.role] ?? 'text-muted-foreground'}`} />
+              <span className="text-foreground font-medium">@{s.name}</span>
+              <span className={`text-[10px] px-1 py-0 rounded border ml-auto ${ROLE_BADGE_COLORS[s.role] ?? 'bg-accent/20 text-muted-foreground border-border/30'}`}>
+                {s.role}
+              </span>
             </button>
           ))}
         </div>

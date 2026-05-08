@@ -25,6 +25,15 @@ const AGENT_STATUS_COLORS: Record<string, string> = {
   waiting:   'bg-orange-400',
 }
 
+const ROLE_COLORS: Record<string, string> = {
+  planning:       'bg-blue-600/20 text-blue-400 border-blue-600/30',
+  implementation: 'bg-green-600/20 text-green-400 border-green-600/30',
+  review:         'bg-orange-600/20 text-orange-400 border-orange-600/30',
+  ui:             'bg-purple-600/20 text-purple-400 border-purple-600/30',
+  assistant:      'bg-cyan-600/20 text-cyan-400 border-cyan-600/30',
+  coder:          'bg-emerald-600/20 text-emerald-400 border-emerald-600/30',
+}
+
 export function SharedConversation({ children, onOpenSettings, onOpenAgentSettings }: SharedConversationProps) {
   const openNewTaskDialog = useChatStore((s) => s.openNewTaskDialog)
   const taskRailCollapsed = useUIStore((s) => s.taskRailCollapsed)
@@ -212,21 +221,30 @@ export function SharedConversation({ children, onOpenSettings, onOpenAgentSettin
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
           {enabledAgents.length === 0 && (
             <span className="text-xs text-muted-foreground">未配置 Agent</span>
           )}
           {enabledAgents.map((agent) => (
-            <div
+            <button
               key={agent.id}
-              className="px-2.5 py-1 rounded flex items-center gap-1.5 text-xs bg-card border border-border text-foreground"
+              onClick={() => onOpenAgentSettings?.()}
+              title={`配置 ${agent.name}`}
+              className="px-2.5 py-1 rounded flex items-center gap-1.5 text-xs bg-card border border-border text-foreground hover:bg-secondary hover:border-accent/30 transition-colors cursor-pointer"
             >
-              <div className="w-1.5 h-1.5 rounded-full bg-accent" />
-              <span>{agent.name}</span>
+              <div className={`w-1.5 h-1.5 rounded-full ${AGENT_STATUS_COLORS.idle}`} />
+              <span className="font-medium">{agent.name}</span>
               {agent.role && (
-                <span className="text-[10px] text-muted-foreground">({agent.role})</span>
+                <span className={`text-[10px] px-1 py-0 rounded border ${ROLE_COLORS[agent.role] ?? 'bg-accent/20 text-muted-foreground border-border/30'}`}>
+                  {agent.role}
+                </span>
               )}
-            </div>
+              {agent.capabilities && agent.capabilities.length > 0 && (
+                <span className="text-[10px] text-muted-foreground hidden sm:inline">
+                  {agent.capabilities.slice(0, 2).join(' · ')}
+                </span>
+              )}
+            </button>
           ))}
         </div>
       </div>
