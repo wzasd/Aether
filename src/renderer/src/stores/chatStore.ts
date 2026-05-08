@@ -808,6 +808,18 @@ export const useChatStore = create<ChatState>((set, get) => {
           }
 
           const isOpenFloor = collaborationMode === 'open_floor'
+
+          // Initialize frontend Open Floor state so agent_observation events
+          // pass the status === 'active' guard in the ai:event handler.
+          if (isOpenFloor) {
+            set((s) => ({
+              openFloorStates: {
+                ...s.openFloorStates,
+                [conversationId]: { status: 'active' as const, responses: [], startTime: Date.now() }
+              }
+            }))
+          }
+
           const modeExecution = isOpenFloor ? 'parallel' : config.executionMode ?? 'serial'
           const modePermission = isOpenFloor ? 'manual' : config.permissionMode
 
