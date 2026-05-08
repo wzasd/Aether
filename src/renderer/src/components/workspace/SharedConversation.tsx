@@ -34,6 +34,7 @@ export function SharedConversation({ children, onOpenSettings, onOpenAgentSettin
   const [exportPos, setExportPos] = useState<{ x: number; y: number } | null>(null)
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
   const projectBtnRef = useRef<HTMLButtonElement>(null)
+  const memberBtnRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const exportBtnRef = useRef<HTMLButtonElement>(null)
 
@@ -123,12 +124,22 @@ export function SharedConversation({ children, onOpenSettings, onOpenAgentSettin
 
         {/* Member count */}
         <button
+          ref={memberBtnRef}
           title="查看成员"
           onClick={() => setMemberOpen((v) => !v)}
           className="titlebar-no-drag relative z-40 flex items-center gap-1 px-1.5 py-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-card transition-colors shrink-0 text-xs"
         >
           <Users size={13} />
           <span>{enabledAgents.length}</span>
+        </button>
+
+        {/* Settings */}
+        <button
+          onClick={onOpenSettings}
+          title="设置"
+          className="titlebar-no-drag relative z-40 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-card transition-colors shrink-0"
+        >
+          <Settings size={13} />
         </button>
 
         {projectOpen && createPortal(
@@ -195,77 +206,66 @@ export function SharedConversation({ children, onOpenSettings, onOpenAgentSettin
         )}
       </div>
 
-      {/* ── Active Agent Quick View ─────────────────────────────── */}
-      <div className="px-3 py-1.5 border-b border-border bg-secondary/20 relative">
-        <div className="text-xs text-muted-foreground truncate">
-          {enabledAgents.length === 0 ? (
-            <span>未配置 Agent</span>
-          ) : (
-            <span>{enabledAgents.map((agent) => `@${agent.name}`).join(' ')}</span>
-          )}
-        </div>
-
-        {/* Member popup */}
-        {memberOpen && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setMemberOpen(false)} />
-            <div className="absolute left-3 top-full mt-1 z-50 w-56 bg-card border border-border rounded-lg shadow-xl">
-              <div className="px-3 py-2 border-b border-border">
-                <span className="text-xs text-foreground font-medium">
-                  {activeWorkspace?.name ?? 'Dev Team'} ({enabledAgents.length})
-                </span>
-              </div>
-              <div className="max-h-60 overflow-y-auto thin-scrollbar">
-                {enabledAgents.length === 0 ? (
-                  <div className="px-3 py-3 text-xs text-muted-foreground text-center">
-                    暂未配置 Agent
-                    {onOpenAgentSettings && (
-                      <button
-                        onClick={() => {
-                          onOpenAgentSettings()
-                          setMemberOpen(false)
-                        }}
-                        className="block w-full mt-1 text-blue-400 hover:text-blue-300 underline"
-                      >
-                        前往 Settings 添加
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  enabledAgents.map((agent) => (
-                  <button
-                    key={agent.id}
-                    onClick={() => {
-                      onOpenAgentSettings?.()
-                      setMemberOpen(false)
-                    }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-secondary transition-colors flex items-center gap-2 text-xs"
-                  >
-                    <span className="text-[10px] text-muted-foreground">🤖</span>
-                    <span className="text-foreground font-medium">@{agent.name}</span>
-                    {agent.role && (
-                      <span className="text-[10px] text-muted-foreground ml-auto">{agent.role}</span>
-                    )}
-                  </button>
-                )))}
-              </div>
-              {onOpenAgentSettings && (
-                <div className="border-t border-border px-3 py-1.5">
-                  <button
-                    onClick={() => {
-                      onOpenAgentSettings()
-                      setMemberOpen(false)
-                    }}
-                    className="text-[10px] text-muted-foreground hover:text-foreground transition-colors underline w-full text-center"
-                  >
-                    管理 Agent
-                  </button>
-                </div>
-              )}
+      {/* Member popup */}
+      {memberOpen && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setMemberOpen(false)} />
+          <div className="absolute left-3 top-12 z-50 w-56 bg-card border border-border rounded-lg shadow-xl">
+            <div className="px-3 py-2 border-b border-border">
+              <span className="text-xs text-foreground font-medium">
+                {activeWorkspace?.name ?? 'Dev Team'} ({enabledAgents.length})
+              </span>
             </div>
-          </>
-        )}
-      </div>
+            <div className="max-h-60 overflow-y-auto thin-scrollbar">
+              {enabledAgents.length === 0 ? (
+                <div className="px-3 py-3 text-xs text-muted-foreground text-center">
+                  暂未配置 Agent
+                  {onOpenAgentSettings && (
+                    <button
+                      onClick={() => {
+                        onOpenAgentSettings()
+                        setMemberOpen(false)
+                      }}
+                      className="block w-full mt-1 text-blue-400 hover:text-blue-300 underline"
+                    >
+                      前往 Settings 添加
+                    </button>
+                  )}
+                </div>
+              ) : (
+                enabledAgents.map((agent) => (
+                <button
+                  key={agent.id}
+                  onClick={() => {
+                    onOpenAgentSettings?.()
+                    setMemberOpen(false)
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-secondary transition-colors flex items-center gap-2 text-xs"
+                >
+                  <span className="text-[10px] text-muted-foreground">🤖</span>
+                  <span className="text-foreground font-medium">@{agent.name}</span>
+                  {agent.role && (
+                    <span className="text-[10px] text-muted-foreground ml-auto">{agent.role}</span>
+                  )}
+                </button>
+              )))}
+            </div>
+            {onOpenAgentSettings && (
+              <div className="border-t border-border px-3 py-1.5">
+                <button
+                  onClick={() => {
+                    onOpenAgentSettings()
+                    setMemberOpen(false)
+                  }}
+                  className="text-[10px] text-muted-foreground hover:text-foreground transition-colors underline w-full text-center"
+                >
+                  管理 Agent
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* ── Conversation thread ───────────────────────────────────── */}
       <div className="thin-scrollbar flex-1 overflow-y-auto overflow-x-hidden">
