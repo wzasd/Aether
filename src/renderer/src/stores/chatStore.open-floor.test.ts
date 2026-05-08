@@ -118,7 +118,7 @@ describe('chatStore Open Floor state', () => {
       skippedAgents: 2
     })
 
-    expect(useChatStore.getState().openFloorStates['conv-b'].status).toBe('closed')
+    expect(useChatStore.getState().openFloorStates['conv-b']).toBeUndefined()
     expect(useChatStore.getState().openFloorStates['conv-a'].status).toBe('active')
     expect(messageCreate).not.toHaveBeenCalled()
   })
@@ -129,7 +129,7 @@ describe('chatStore Open Floor state', () => {
       currentConversation: makeConversation('conv-a'),
       messages: [],
       openFloorStates: {
-        'conv-a': { status: 'closed', responses: [], startTime: 1 }
+        // State deleted (simulating closeOpenFloor behavior)
       }
     })
 
@@ -142,8 +142,8 @@ describe('chatStore Open Floor state', () => {
       timestamp: 999
     } as never)
 
-    // addOpenFloorResponse correctly guards against closed state
-    expect(useChatStore.getState().openFloorStates['conv-a'].responses).toHaveLength(0)
+    // addOpenFloorResponse correctly guards against deleted/closed state
+    expect(useChatStore.getState().openFloorStates['conv-a']).toBeUndefined()
 
     // Fixed: handleAIEvent now checks status === 'active' before creating messages.
     // Late observations after Open Floor is closed are discarded without creating

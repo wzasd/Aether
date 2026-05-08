@@ -497,17 +497,15 @@ export const useChatStore = create<ChatState>((set, get) => {
       set((s) => {
         const existing = s.openFloorStates[conversationId]
         if (!existing) return s
-        // Only close the cycle state — user's mode selection (pendingCollaborationMode)
-        // must persist across cycles. Deleting it here causes the next sendMessage to
-        // see undefined mode, skip openFloorStates init, and drop all agent_observation events.
-        const retainedMode = s.pendingCollaborationMode[conversationId]
-        console.info('[chatStore] closeOpenFloor: conv=%s status→closed, pendingMode=%s (retained for next cycle)',
-          conversationId, retainedMode ?? 'undefined')
+        // Delete the state instead of setting 'closed' to avoid race condition:
+        // If a new Open Floor round started before the old round's 'open_floor_closed'
+        // event arrives, setting 'closed' would drop the new round's observations.
+        // Deleting achieves the same effect (late observations see !existing and are dropped).
+        const { [conversationId]: _, ...restOpenFloor } = s.openFloorStates
+        console.info('[chatStore] closeOpenFloor: conv=%s deleted (was status=%s)',
+          conversationId, existing.status)
         return {
-          openFloorStates: {
-            ...s.openFloorStates,
-            [conversationId]: { ...existing, status: 'closed' as const }
-          },
+          openFloorStates: restOpenFloor,
         }
       }),
 
@@ -721,8 +719,9 @@ export const useChatStore = create<ChatState>((set, get) => {
             )
           }))
         }
+      }
 
-        // 保存用户消息到 DB
+      // 保存用户消息到 DB — must run for EVERY message, not just the first
       try {
         const message = await window.api.message.create({
           conversation_id: conversationId,
@@ -731,7 +730,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         })
         appendMessageIfVisible(conversationId, message as Message)
       } catch (err) {
-        console.error('Failed to save user message:', err)
+        console.error('[chatStore] Failed to save user message:', err)
       }
 
       // 设置乐观流式状态
@@ -745,7 +744,6 @@ export const useChatStore = create<ChatState>((set, get) => {
         doneRequestIds: {}
       })
       resetStreamingTimeout()
-      }
 
       const config = useSessionConfigStore.getState()
       const agentStore = useAgentProfileStore.getState()
@@ -804,12 +802,11 @@ export const useChatStore = create<ChatState>((set, get) => {
           if (taskOverrides) set({ pendingTaskOverrides: null })
 
           // collaborationMode is now per-conversation (Record<string, CollaborationMode>)
+          // Read but do NOT delete — the mode persists across multiple send cycles.
+          // Deleting it here was part of bug #10: the next send would see undefined
+          // mode, skip openFloorStates init, and drop all agent_observation events.
           const collaborationMode = get().pendingCollaborationMode[conversationId]
-          if (collaborationMode) {
-            const { [conversationId]: _, ...rest } = get().pendingCollaborationMode
-            set({ pendingCollaborationMode: rest })
-          }
-          console.debug('[chatStore] sendMessage: conv=%s mode=%s', conversationId, collaborationMode ?? 'undefined')
+          console.info('[chatStore] sendMessage: conv=%s collaborationMode=%s', conversationId, collaborationMode ?? 'undefined')
 
           const isOpenFloor = collaborationMode === 'open_floor'
 
