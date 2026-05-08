@@ -1600,17 +1600,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           const closedConvId = event.conversationId || state.currentConversation?.id
           if (!closedConvId) break
           get().closeOpenFloor(closedConvId)
-          // Append summary system message
-          const summary = `🧠 自由讨论结束：${event.totalResponses} 个 Agent 回复，${event.skippedAgents} 个静默`
-          if (state.currentConversation?.id === closedConvId) {
-            void window.api.message.create({
-              conversation_id: closedConvId,
-              role: 'system',
-              content: summary
-            }).then((message) => {
-              appendMessageIfVisible(closedConvId, message as Message)
-            }).catch(() => {})
-          }
+          // Summary system message is already emitted by the backend via appendSystemMessage.
           break
         }
       }
