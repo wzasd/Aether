@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { flushSync } from 'react-dom'
 import { useSessionConfigStore } from './sessionConfigStore'
 import { useAgentProfileStore } from './agentProfileStore'
 import { useUsageStore } from './usageStore'
@@ -1574,6 +1575,8 @@ export const useChatStore = create<ChatState>((set, get) => {
           const thinkingConvId = event.conversationId || state.currentConversation?.id
           if (!thinkingConvId) break
           if (state.openFloorStates[thinkingConvId]?.status !== 'active') break
+
+          // Track thinking agent in openFloor state (for status bar counter)
           set((s) => {
             const existing = s.openFloorStates[thinkingConvId]
             if (!existing) return s
@@ -1593,6 +1596,26 @@ export const useChatStore = create<ChatState>((set, get) => {
               }
             }
           })
+
+          // Also append a visible placeholder message in the chat so the user
+          // sees each agent "thinking" rather than a black-box wait.
+          if (state.currentConversation?.id === thinkingConvId) {
+            set((s) => {
+              if (s.currentConversation?.id !== thinkingConvId) return s
+              const placeholderId = `thinking-${event.agentProfileId}`
+              // Avoid duplicate placeholders if agent_thinking is received twice
+              if (s.messages.some((m) => m.id === placeholderId)) return s
+              const placeholder: Message = {
+                id: placeholderId,
+                conversation_id: thinkingConvId,
+                role: 'assistant',
+                content: `🧠 **${event.agentName}**${event.agentRole ? `（${event.agentRole}）` : ''} 思考中...`,
+                thinking: null,
+                created_at: Date.now(),
+              }
+              return { ...s, messages: [...s.messages, placeholder] }
+            })
+          }
           break
         }
 
@@ -1613,7 +1636,8 @@ export const useChatStore = create<ChatState>((set, get) => {
             timestamp: event.timestamp,
             relevanceScore: event.relevanceScore ?? 0
           })
-          // Also append as a visible message in the conversation
+          // Replace the thinking placeholder with the real reply, or append if
+          // no placeholder exists (e.g. page refreshed mid-round).
           if (state.currentConversation?.id === obsConvId) {
             void window.api.message.create({
               conversation_id: obsConvId,
@@ -1621,14 +1645,25 @@ export const useChatStore = create<ChatState>((set, get) => {
               content: `**${event.agentName}**\n\n${event.content}`,
               agent_profile_id: event.agentProfileId
             }).then((message) => {
-              // Stagger message insertion so replies appear one-by-one instead of
-              // all at once. React 18 batches setState calls within the same
-              // microtask, and since agents finish at roughly the same time,
-              // we spread renders across ~400ms per message.
-              const delay = get().openFloorStates[obsConvId]?.responses.length * 400
-              setTimeout(() => {
-                appendMessageIfVisible(obsConvId, message as Message)
-              }, Math.min(delay, 2000))
+              const placeholderId = `thinking-${event.agentProfileId}`
+              // flushSync forces React to render this message immediately,
+              // bypassing React 18's automatic batching. Without this, 6 agents
+              // completing within ~1s would all render in a single batch —
+              // the user sees them "all at once" instead of one-by-one.
+              flushSync(() => {
+                set((s) => {
+                  if (s.currentConversation?.id !== obsConvId) return s
+                  const idx = s.messages.findIndex((m) => m.id === placeholderId)
+                  if (idx >= 0) {
+                    // Replace the thinking placeholder in-place
+                    const newMessages = [...s.messages]
+                    newMessages[idx] = message as Message
+                    return { ...s, messages: newMessages }
+                  }
+                  // Fallback: no placeholder found — append normally
+                  return { ...s, messages: [...s.messages, message as Message] }
+                })
+              })
             }).catch((err) => {
               console.error('Failed to create agent observation message:', err)
             })
@@ -1639,6 +1674,22 @@ export const useChatStore = create<ChatState>((set, get) => {
         case 'open_floor_closed': {
           const closedConvId = event.conversationId || state.currentConversation?.id
           if (!closedConvId) break
+
+          // Replace any thinking placeholders that never got a reply (timed out /
+          // skipped) with a silent indicator so the user knows which agents
+          // didn't participate.
+          set((s) => {
+            if (s.currentConversation?.id !== closedConvId) return s
+            const newMessages = s.messages.map((m) => {
+              if (m.id.startsWith('thinking-')) {
+                const agentName = m.content?.match(/\*\*(.+?)\*\*/)?.[1] || 'Agent'
+                return { ...m, content: `🤫 **${agentName}** 静默` }
+              }
+              return m
+            })
+            return { ...s, messages: newMessages }
+          })
+
           get().closeOpenFloor(closedConvId)
           // Summary system message is already emitted by the backend via appendSystemMessage.
           break
