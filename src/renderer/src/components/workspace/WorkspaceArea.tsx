@@ -813,6 +813,7 @@ function SettingsTeams() {
   const [topologyOpen, setTopologyOpen] = useState(true)
   const profiles = useAgentProfileStore((s) => s.profiles)
   const loadProfiles = useAgentProfileStore((s) => s.loadProfiles)
+  const seedDefaults = useAgentProfileStore((s) => s.seedDefaults)
   const providers = useProviderStore((s) => s.providers)
   const loadProviders = useProviderStore((s) => s.loadProviders)
   const currentWorkspaceId = useWorkspaceStore((s) => s.currentWorkspaceId)
@@ -854,9 +855,15 @@ function SettingsTeams() {
 
   useEffect(() => {
     loadTeams().catch(() => setTeams([]))
-    loadProfiles(currentWorkspaceId ?? undefined).catch(() => {})
+    loadProfiles(currentWorkspaceId ?? undefined).then(() => {
+      // Auto-seed default agents if no profiles exist yet (prevents empty agent list)
+      const current = useAgentProfileStore.getState().profiles
+      if (current.length === 0) {
+        seedDefaults().catch((err) => console.error('Failed to seed default agents:', err))
+      }
+    }).catch(() => {})
     loadProviders().catch(() => {})
-  }, [currentWorkspaceId, loadProfiles, loadProviders])
+  }, [currentWorkspaceId, loadProfiles, loadProviders, seedDefaults])
 
   const team = teams.find((t) => t.id === selectedTeamId) ?? teams[0]
   const policies = team?.policies ?? {}

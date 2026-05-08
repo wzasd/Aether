@@ -10,6 +10,7 @@ import { NewTaskDialog } from './components/NewTaskDialog'
 import { useWorkspaceStore } from './stores/workspaceStore'
 import { useChatStore } from './stores/chatStore'
 import { useUIStore } from './stores/uiStore'
+import { useAgentProfileStore } from './stores/agentProfileStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useEffect, useState } from 'react'
 
@@ -55,6 +56,9 @@ function AppContent() {
 
   useEffect(() => {
     loadWorkspaces()
+    // Ensure agents are loaded on startup; seed defaults on first launch
+    useAgentProfileStore.getState().loadProfiles().catch(() => {})
+    useAgentProfileStore.getState().seedDefaults().catch(() => {})
   }, [loadWorkspaces])
 
   useEffect(() => {
