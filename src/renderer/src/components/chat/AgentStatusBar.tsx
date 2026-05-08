@@ -1,16 +1,14 @@
 import { useState, useRef, useEffect } from 'react'
 import { Brain, Users, Zap, ChevronDown } from 'lucide-react'
 import { useAgentProfileStore } from '../../stores/agentProfileStore'
-import { useSessionConfigStore } from '../../stores/sessionConfigStore'
+import { useSessionConfigStore, type CanonicalPermissionMode } from '../../stores/sessionConfigStore'
 import { useChatStore } from '../../stores/chatStore'
 
 interface AgentStatusBarProps {
   conversationId: string
 }
 
-type PermissionMode = 'plan' | 'autoEdit' | 'trusted'
-
-const PERMISSION_OPTIONS: { value: PermissionMode; label: string; color: string }[] = [
+const PERMISSION_OPTIONS: { value: CanonicalPermissionMode; label: string; color: string }[] = [
   { value: 'plan', label: 'Ask first', color: 'text-muted-foreground' },
   { value: 'autoEdit', label: 'Auto', color: 'text-yellow-400' },
   { value: 'trusted', label: 'YOLO', color: 'text-red-400' },

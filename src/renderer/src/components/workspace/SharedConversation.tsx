@@ -111,8 +111,9 @@ export function SharedConversation({ children, onOpenSettings, onOpenAgentSettin
         <button
           title="停止所有 Agent"
           onClick={() => {
+            if (!currentConversation?.id) return
             if (window.confirm('确定要停止所有 Agent 吗？正在执行的任务将中断。')) {
-              useChatStore.getState().closeOpenFloor(currentConversation?.id ?? '')
+              useChatStore.getState().closeOpenFloor(currentConversation.id)
             }
           }}
           className="titlebar-no-drag relative z-40 p-1 rounded text-muted-foreground hover:text-red-400 hover:bg-card transition-colors shrink-0"
@@ -215,7 +216,23 @@ export function SharedConversation({ children, onOpenSettings, onOpenAgentSettin
                 </span>
               </div>
               <div className="max-h-60 overflow-y-auto thin-scrollbar">
-                {enabledAgents.map((agent) => (
+                {enabledAgents.length === 0 ? (
+                  <div className="px-3 py-3 text-xs text-muted-foreground text-center">
+                    暂未配置 Agent
+                    {onOpenAgentSettings && (
+                      <button
+                        onClick={() => {
+                          onOpenAgentSettings()
+                          setMemberOpen(false)
+                        }}
+                        className="block w-full mt-1 text-blue-400 hover:text-blue-300 underline"
+                      >
+                        前往 Settings 添加
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  enabledAgents.map((agent) => (
                   <button
                     key={agent.id}
                     onClick={() => {
@@ -230,7 +247,7 @@ export function SharedConversation({ children, onOpenSettings, onOpenAgentSettin
                       <span className="text-[10px] text-muted-foreground ml-auto">{agent.role}</span>
                     )}
                   </button>
-                ))}
+                )))}
               </div>
               {onOpenAgentSettings && (
                 <div className="border-t border-border px-3 py-1.5">
