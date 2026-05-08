@@ -497,14 +497,17 @@ export const useChatStore = create<ChatState>((set, get) => {
       set((s) => {
         const existing = s.openFloorStates[conversationId]
         if (!existing) return s
-        // Clean up per-conversation mode to prevent memory leak (CR #5)
-        const { [conversationId]: _, ...restModes } = s.pendingCollaborationMode
+        // Only close the cycle state — user's mode selection (pendingCollaborationMode)
+        // must persist across cycles. Deleting it here causes the next sendMessage to
+        // see undefined mode, skip openFloorStates init, and drop all agent_observation events.
+        const retainedMode = s.pendingCollaborationMode[conversationId]
+        console.info('[chatStore] closeOpenFloor: conv=%s status→closed, pendingMode=%s (retained for next cycle)',
+          conversationId, retainedMode ?? 'undefined')
         return {
           openFloorStates: {
             ...s.openFloorStates,
             [conversationId]: { ...existing, status: 'closed' as const }
           },
-          pendingCollaborationMode: restModes,
         }
       }),
 
@@ -806,6 +809,7 @@ export const useChatStore = create<ChatState>((set, get) => {
             const { [conversationId]: _, ...rest } = get().pendingCollaborationMode
             set({ pendingCollaborationMode: rest })
           }
+          console.debug('[chatStore] sendMessage: conv=%s mode=%s', conversationId, collaborationMode ?? 'undefined')
 
           const isOpenFloor = collaborationMode === 'open_floor'
 
@@ -1571,7 +1575,11 @@ export const useChatStore = create<ChatState>((set, get) => {
           const obsConvId = event.conversationId || state.currentConversation?.id
           if (!obsConvId) break
           // Guard: ignore late observations after Open Floor has been closed (CR #9)
-          if (state.openFloorStates[obsConvId]?.status !== 'active') break
+          if (state.openFloorStates[obsConvId]?.status !== 'active') {
+            console.warn('[chatStore] agent_observation dropped: openFloorStates[%s] = %s (expected "active"), agent=%s',
+              obsConvId, state.openFloorStates[obsConvId]?.status ?? 'undefined', event.agentName)
+            break
+          }
           // Add the observation to the Open Floor state
           get().addOpenFloorResponse(obsConvId, {
             agentId: event.agentProfileId,
