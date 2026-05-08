@@ -75,6 +75,7 @@ describe('chatStore Open Floor state', () => {
         'conv-a': {
           status: 'active',
           responses: [],
+          thinkingAgents: [],
           startTime: 1
         }
       }

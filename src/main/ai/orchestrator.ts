@@ -597,6 +597,17 @@ class AgentOrchestrator {
             return
           }
 
+          // Notify frontend that this agent has started thinking
+          if (!webContents.isDestroyed()) {
+            webContents.send('ai:event', {
+              type: 'agent_thinking',
+              conversationId,
+              agentProfileId: profile.id,
+              agentName: profile.name,
+              agentRole: profile.role,
+            })
+          }
+
           // Check abort before expensive observation call
           if (state.status !== 'active' || abortController.signal.aborted) return
 

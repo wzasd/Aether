@@ -74,7 +74,11 @@ export function AgentStatusBar({ conversationId }: AgentStatusBarProps) {
             <>
               <Brain size={12} />
               <span>Open Floor</span>
-              {openFloorState?.responses.length ? (
+              {openFloorState?.thinkingAgents?.length ? (
+                <span className="text-blue-400/70 animate-pulse">
+                  {openFloorState.thinkingAgents.length} 思考中
+                </span>
+              ) : openFloorState?.responses.length ? (
                 <span className="text-blue-400/70">({openFloorState.responses.length})</span>
               ) : null}
             </>

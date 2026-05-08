@@ -165,6 +165,7 @@ interface ChatState {
   openFloorStates: Record<string, {
     status: 'active' | 'closing' | 'closed'
     responses: Array<{ agentId: string; agentName: string; content: string; timestamp: number; relevanceScore: number }>
+    thinkingAgents: Array<{ agentId: string; agentName: string; agentRole?: string }>
     startTime: number
   }>
   addOpenFloorResponse: (conversationId: string, response: { agentId: string; agentName: string; content: string; timestamp: number; relevanceScore: number }) => void
@@ -488,7 +489,8 @@ export const useChatStore = create<ChatState>((set, get) => {
             ...s.openFloorStates,
             [conversationId]: {
               ...existing,
-              responses: [...existing.responses, response]
+              responses: [...existing.responses, response],
+              thinkingAgents: (existing.thinkingAgents ?? []).filter((a) => a.agentId !== response.agentId)
             }
           }
         }
@@ -816,7 +818,7 @@ export const useChatStore = create<ChatState>((set, get) => {
             set((s) => ({
               openFloorStates: {
                 ...s.openFloorStates,
-                [conversationId]: { status: 'active' as const, responses: [], startTime: Date.now() }
+                [conversationId]: { status: 'active' as const, responses: [], thinkingAgents: [], startTime: Date.now() }
               }
             }))
           }
@@ -1565,6 +1567,32 @@ export const useChatStore = create<ChatState>((set, get) => {
 
         case 'system_init': {
           // CLI 初始化，可记录 session 信息
+          break
+        }
+
+        case 'agent_thinking': {
+          const thinkingConvId = event.conversationId || state.currentConversation?.id
+          if (!thinkingConvId) break
+          if (state.openFloorStates[thinkingConvId]?.status !== 'active') break
+          set((s) => {
+            const existing = s.openFloorStates[thinkingConvId]
+            if (!existing) return s
+            const alreadyThinking = existing.thinkingAgents.some((a) => a.agentId === event.agentProfileId)
+            if (alreadyThinking) return s
+            return {
+              openFloorStates: {
+                ...s.openFloorStates,
+                [thinkingConvId]: {
+                  ...existing,
+                  thinkingAgents: [...existing.thinkingAgents, {
+                    agentId: event.agentProfileId,
+                    agentName: event.agentName,
+                    agentRole: event.agentRole
+                  }]
+                }
+              }
+            }
+          })
           break
         }
 
