@@ -152,7 +152,9 @@ class AgentOrchestrator {
     this.invocationQueue.clear(conversationId)
 
     // Store collaboration mode for this conversation
-    const mode: CollaborationMode = collaborationMode ?? 'orchestrated'
+    const mode: CollaborationMode = collaborationMode
+      ?? this.conversationModes.get(conversationId)
+      ?? 'orchestrated'
     this.conversationModes.set(conversationId, mode)
 
     // Open Floor branch: broadcast to all team agents, skip normal pipeline
