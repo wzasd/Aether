@@ -582,12 +582,14 @@ class AgentOrchestrator {
 
         try {
           // Start the runtime with base config (or defaults) so it can generate
+          let startFailed = false
           if (baseConfig) {
             await runtime.start(baseConfig).catch(() => {
               // If start fails, agent can't participate — silently skip
               skippedAgentsSet.add(profile.id)
-              return
+              startFailed = true
             })
+            if (startFailed) return
           } else {
             skippedAgentsSet.add(profile.id)
             return
