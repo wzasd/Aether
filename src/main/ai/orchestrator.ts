@@ -617,6 +617,20 @@ class AgentOrchestrator {
               relevanceScore: result.relevanceScore,
             })
             completedAgents.add(profile.id)
+
+            // Emit observation immediately for streaming-like UX —
+            // each agent's reply appears as soon as it finishes, not batched at the end.
+            if (!webContents.isDestroyed()) {
+              webContents.send('ai:event', {
+                type: 'agent_observation',
+                conversationId,
+                agentProfileId: profile.id,
+                agentName: profile.name,
+                content: result.reply,
+                timestamp: Date.now(),
+                relevanceScore: result.relevanceScore,
+              })
+            }
           } else {
             skippedAgentsSet.add(profile.id)
           }
@@ -651,26 +665,8 @@ class AgentOrchestrator {
     state.endTime = Date.now()
     this.openFloorControllers.delete(conversationId)
 
-    // Send all responses as individual agent messages
-    for (const response of state.responses) {
-      this.appendSystemMessage(
-        webContents,
-        conversationId,
-        `🧠 @${response.agentName} 参与了讨论`
-      )
-      // Emit as a regular message event so the UI renders it
-      if (!webContents.isDestroyed()) {
-        webContents.send('ai:event', {
-          type: 'agent_observation',
-          conversationId,
-          agentProfileId: response.agentId,
-          agentName: response.agentName,
-          content: response.content,
-          timestamp: response.timestamp,
-          relevanceScore: response.relevanceScore,
-        })
-      }
-    }
+    // Observations are emitted immediately when each agent finishes (see promise handler above).
+    // This gives a streaming-like UX where replies appear one-by-one instead of all at once.
 
     // Summary message
     const total = state.responses.length
