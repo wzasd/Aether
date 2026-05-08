@@ -5,14 +5,6 @@
 // 4 种权限模式，映射到 Claude CLI 的 --permission-mode 参数
 export type PermissionMode = 'manual' | 'autoEdit' | 'plan' | 'fullAuto'
 
-/** 前端权限模式 → CLI --permission-mode 参数映射 */
-export const PERMISSION_MODE_CLI_MAP: Record<PermissionMode, string> = {
-  manual: 'default',
-  autoEdit: 'acceptEdits',
-  plan: 'plan',
-  fullAuto: 'bypassPermissions'
-}
-
 export const PERMISSION_MODES: {
   id: PermissionMode
   label: string
@@ -168,8 +160,9 @@ export interface AskUserQuestionEvent {
   id: string
   questions: Array<{
     question: string
-    options?: string[]
+    header?: string
     multiSelect?: boolean
+    options?: Array<{ label: string; description?: string }>
   }>
 }
 
@@ -218,6 +211,26 @@ export interface UsageEvent {
   usage: UsageInfo
 }
 
+/** 配置选项更新（来自 ACP config_option_update） */
+export interface ConfigOptionUpdateEvent {
+  type: 'config_option_update'
+  configOptions: Array<{
+    id: string
+    name?: string
+    label?: string
+    category?: string
+    type: string
+    currentValue?: string
+    options?: Array<{ value: string; name?: string }>
+  }>
+}
+
+/** 模型列表更新（来自 ACP session/new 或 session/update） */
+export interface ModelsUpdateEvent {
+  type: 'models_update'
+  models: Array<{ id: string; name: string; contextWindow: number }>
+}
+
 /** 统一 AI 事件联合类型 */
 export type AIEvent =
   | TextDeltaEvent
@@ -236,6 +249,8 @@ export type AIEvent =
   | SubagentCompletedEvent
   | SystemInitEvent
   | UsageEvent
+  | ConfigOptionUpdateEvent
+  | ModelsUpdateEvent
 
 // ─── AI 请求 ───
 export interface AIRequest {

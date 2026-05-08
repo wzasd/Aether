@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useChatStore } from '../../stores/chatStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useNavigate } from 'react-router-dom'
-import { MessageSquarePlus, Trash2, PanelLeftClose, PanelLeft, Sun, Moon, FolderOpen } from 'lucide-react'
+import { MessageSquarePlus, MoreHorizontal, Trash2, PanelLeftClose, PanelLeft, Sun, Moon, FolderOpen, Users } from 'lucide-react'
 import { ConversationSearch } from '../ConversationSearch'
 import { DeleteConfirmDialog } from '../ConversationDeleteConfirm'
 import { TodoList } from '../TodoList'
+import { NewTaskDialog } from '../NewTaskDialog'
 import { useMemoryStore } from '../../stores/memoryStore'
 
 export function Sidebar() {
@@ -26,12 +27,17 @@ export function Sidebar() {
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace)
   const navigate = useNavigate()
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const [showNewWorkspace, setShowNewWorkspace] = useState(false)
   const [newWorkspaceName, setNewWorkspaceName] = useState('')
+  const [newWorkspacePath, setNewWorkspacePath] = useState('')
   const memoryCandidates = useMemoryStore((s) => s.candidates)
   const loadCandidates = useMemoryStore((s) => s.loadCandidates)
   const approveCandidate = useMemoryStore((s) => s.approveCandidate)
   const rejectCandidate = useMemoryStore((s) => s.rejectCandidate)
+  const [newTaskOpen, setNewTaskOpen] = useState(false)
 
   useEffect(() => {
     loadWorkspaces()
@@ -51,20 +57,32 @@ export function Sidebar() {
   const handleCreateWorkspace = async () => {
     const name = newWorkspaceName.trim()
     if (!name) return
-    const ws = await createWorkspace({ name })
+    const ws = await createWorkspace({ name, repo_path: newWorkspacePath || undefined })
     if (ws) {
       setCurrentWorkspace(ws.id)
       loadConversations(ws.id)
     }
     setNewWorkspaceName('')
+    setNewWorkspacePath('')
     setShowNewWorkspace(false)
   }
 
-  const handleNewChat = async () => {
-    const conv = await createConversation({ title: 'New Chat', workspace_id: currentWorkspaceId || undefined })
-    if (conv) {
-      navigate(`/chat/${conv.id}`)
-    }
+  const handlePickFolder = async () => {
+    const dir = await window.api.dialog.openDirectory()
+    if (dir) setNewWorkspacePath(dir)
+  }
+
+  const handleNewTaskSelect = (mode: 'solo' | 'team', teamId?: string, taskId?: string) => {
+    setNewTaskOpen(false)
+    void createConversation({
+      title: mode === 'team' ? 'Team Session' : 'New Chat',
+      workspace_id: currentWorkspaceId || undefined,
+      is_draft: 1,
+      team_id: teamId,
+      task_id: taskId
+    }).then((conv) => {
+      if (conv?.id) navigate(`/chat/${conv.id}`)
+    })
   }
 
   const handleConfirmDelete = async () => {
@@ -76,6 +94,17 @@ export function Sidebar() {
     setDeleteTargetId(null)
   }
 
+  useEffect(() => {
+    if (!openMenuId) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpenMenuId(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [openMenuId])
+
   return (
     <aside
       className={`${sidebarOpen ? 'w-64' : 'w-0'} flex flex-col border-r border-border bg-card transition-all duration-200 overflow-hidden`}
@@ -85,10 +114,14 @@ export function Sidebar() {
         <span className="text-sm font-semibold pl-14">Bytro</span>
         <div className="titlebar-no-drag flex items-center gap-1">
           <button
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            onClick={() => {
+              const next: Record<string, 'light' | 'dark' | 'system'> = { dark: 'light', light: 'system', system: 'dark' }
+              setTheme(next[theme])
+            }}
             className="p-1.5 rounded-md hover:bg-accent transition-colors"
+            title={`Theme: ${theme}`}
           >
-            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+            {theme === 'dark' ? <Moon size={14} /> : theme === 'light' ? <Sun size={14} /> : <Sun size={14} className="opacity-50" />}
           </button>
           <button onClick={toggleSidebar} className="p-1.5 rounded-md hover:bg-accent transition-colors">
             {sidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeft size={14} />}
@@ -109,16 +142,34 @@ export function Sidebar() {
           ))}
         </select>
         {showNewWorkspace ? (
-          <div className="flex gap-1">
-            <input
-              value={newWorkspaceName}
-              onChange={(e) => setNewWorkspaceName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleCreateWorkspace()}
-              placeholder="工作区名称"
-              className="flex-1 text-xs rounded-md border border-border bg-background px-2 py-1 text-foreground placeholder:text-muted-foreground"
-              autoFocus
-            />
-            <button onClick={handleCreateWorkspace} className="text-xs px-2 py-1 rounded-md bg-primary text-primary-foreground">添加</button>
+          <div className="space-y-1.5">
+            <div className="flex gap-1">
+              <input
+                value={newWorkspaceName}
+                onChange={(e) => setNewWorkspaceName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCreateWorkspace()}
+                placeholder="工作区名称"
+                className="flex-1 text-xs rounded-md border border-border bg-background px-2 py-1 text-foreground placeholder:text-muted-foreground"
+                autoFocus
+              />
+              <button onClick={handleCreateWorkspace} className="text-xs px-2 py-1 rounded-md bg-primary text-primary-foreground">添加</button>
+            </div>
+            <div className="flex gap-1">
+              <button
+                onClick={handlePickFolder}
+                className="flex-1 text-xs rounded-md border border-border bg-background px-2 py-1 text-muted-foreground hover:text-foreground truncate text-left"
+              >
+                {newWorkspacePath || '选择项目目录...'}
+              </button>
+              {newWorkspacePath && (
+                <button
+                  onClick={() => setNewWorkspacePath('')}
+                  className="text-xs px-1.5 py-1 rounded text-muted-foreground hover:text-foreground"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <button
@@ -132,7 +183,7 @@ export function Sidebar() {
 
       <div className="px-3 pb-2">
         <button
-          onClick={handleNewChat}
+          onClick={() => setNewTaskOpen(true)}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-sm"
         >
           <MessageSquarePlus size={14} />
@@ -146,23 +197,47 @@ export function Sidebar() {
         {conversations.map((conv) => (
           <div
             key={conv.id}
-            className={`group flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-pointer transition-colors ${
+            className={`relative flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-pointer transition-colors ${
               currentConversation?.id === conv.id
                 ? 'bg-accent text-accent-foreground'
                 : 'hover:bg-accent/50 text-muted-foreground'
             }`}
             onClick={() => navigate(`/chat/${conv.id}`)}
+            onMouseEnter={() => setHoveredId(conv.id)}
+            onMouseLeave={() => setHoveredId((prev) => (prev === conv.id ? null : prev))}
           >
             <span className="truncate flex-1">{conv.title || 'Untitled'}</span>
+            {conv.team_id && <Users size={11} className="text-muted-foreground shrink-0" />}
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                setDeleteTargetId(conv.id)
+                setOpenMenuId(openMenuId === conv.id ? null : conv.id)
               }}
-              className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 transition-all"
+              className={`p-1 rounded hover:bg-accent transition-all shrink-0 ${
+                hoveredId === conv.id || openMenuId === conv.id ? 'opacity-100' : 'opacity-0'
+              }`}
             >
-              <Trash2 size={12} className="text-destructive" />
+              <MoreHorizontal size={13} className="text-muted-foreground" />
             </button>
+
+            {openMenuId === conv.id && (
+              <div
+                ref={menuRef}
+                className="absolute right-0 top-full mt-0.5 z-50 w-36 bg-card border border-border rounded-md shadow-lg py-0.5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  onClick={() => {
+                    setOpenMenuId(null)
+                    setDeleteTargetId(conv.id)
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10 transition-colors text-left"
+                >
+                  <Trash2 size={12} />
+                  删除
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -174,9 +249,9 @@ export function Sidebar() {
         <div className="px-3 py-2 border-t border-border">
           <div className="text-xs font-medium text-muted-foreground mb-1.5">待确认记忆</div>
           {memoryCandidates.slice(0, 3).map((c) => (
-            <div key={c.id} className="bg-zinc-900 border border-zinc-700 rounded p-2 mb-1.5 text-xs">
-              <div className="text-zinc-300 font-medium truncate">{c.title}</div>
-              <div className="text-zinc-500 truncate">{c.content.slice(0, 80)}</div>
+            <div key={c.id} className="bg-card border border-border rounded p-2 mb-1.5 text-xs">
+              <div className="text-foreground font-medium truncate">{c.title}</div>
+              <div className="text-muted-foreground truncate">{c.content.slice(0, 80)}</div>
               <div className="flex gap-1 mt-1.5">
                 <button
                   onClick={() => approveCandidate(c.id, c.workspace_id)}
@@ -186,7 +261,7 @@ export function Sidebar() {
                 </button>
                 <button
                   onClick={() => rejectCandidate(c.id)}
-                  className="px-2 py-0.5 bg-zinc-700 text-zinc-300 rounded hover:bg-zinc-600"
+                  className="px-2 py-0.5 bg-accent text-foreground rounded hover:bg-secondary"
                 >
                   拒绝
                 </button>
@@ -205,6 +280,13 @@ export function Sidebar() {
         onConfirm={handleConfirmDelete}
         onCancel={() => setDeleteTargetId(null)}
       />
+
+      <NewTaskDialog
+        open={newTaskOpen}
+        onSelect={handleNewTaskSelect}
+        onCancel={() => setNewTaskOpen(false)}
+      />
+
     </aside>
   )
 }

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Bytro brand concept prism">
+  <defs>
+    <linearGradient id="bg" x1="140" y1="96" x2="890" y2="940" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="1" stop-color="#07080B"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="250" y1="170" x2="760" y2="850" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#67E8F9"/>
+      <stop offset="0.45" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="34" stdDeviation="42" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="0" stdDeviation="24" flood-color="#3B82F6" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="none"/>
+  <g filter="url(#shadow)">
+    <rect x="72" y="72" width="880" height="880" rx="214" fill="url(#bg)"/>
+    <rect x="96" y="96" width="832" height="832" rx="190" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/>
+    <g filter="url(#glow)">
+      <path d="M512 184L764 360L704 672L512 840L320 672L260 360Z" fill="#060A12" stroke="url(#rim)" stroke-width="24" stroke-linejoin="round"/>
+      <path d="M512 184L764 360L512 506L260 360Z" fill="#38BDF8"/>
+      <path d="M764 360L704 672L512 506Z" fill="#2563EB"/>
+      <path d="M704 672L512 840L512 506Z" fill="#8B5CF6"/>
+      <path d="M512 840L320 672L512 506Z" fill="#3B82F6"/>
+      <path d="M320 672L260 360L512 506Z" fill="#06B6D4"/>
+      <path d="M512 342L650 424L620 610L512 706L404 610L374 424Z" fill="#08090D" fill-opacity="0.92"/>
+      <path d="M512 342L650 424L620 610L512 706L404 610L374 424Z" fill="none" stroke="#E0F2FE" stroke-opacity="0.82" stroke-width="16" stroke-linejoin="round"/>
+      <circle cx="512" cy="512" r="28" fill="#67E8F9"/>
+    </g>
+  </g>
+</svg>

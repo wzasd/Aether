@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Bytro app icon">
+  <defs>
+    <linearGradient id="bg" x1="162" y1="112" x2="862" y2="912" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="0.5" stop-color="#09090B"/>
+      <stop offset="1" stop-color="#18181B"/>
+    </linearGradient>
+    <radialGradient id="topGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(352 226) rotate(48) scale(720)">
+      <stop offset="0" stop-color="#38BDF8" stop-opacity="0.42"/>
+      <stop offset="0.48" stop-color="#2563EB" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#09090B" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="memoryGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(678 692) rotate(112) scale(520)">
+      <stop offset="0" stop-color="#A78BFA" stop-opacity="0.32"/>
+      <stop offset="0.56" stop-color="#10B981" stop-opacity="0.1"/>
+      <stop offset="1" stop-color="#09090B" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mark" x1="316" y1="214" x2="748" y2="814" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#67E8F9"/>
+      <stop offset="0.42" stop-color="#3B82F6"/>
+      <stop offset="0.72" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#34D399"/>
+    </linearGradient>
+    <linearGradient id="nodeStroke" x1="300" y1="238" x2="740" y2="780" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BAE6FD"/>
+      <stop offset="0.45" stop-color="#60A5FA"/>
+      <stop offset="0.75" stop-color="#A78BFA"/>
+      <stop offset="1" stop-color="#6EE7B7"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="34" stdDeviation="42" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+    <filter id="lineGlow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.25 0 0 0 0 0.55 0 0 0 0 1 0 0 0 0.55 0" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <clipPath id="clip">
+      <rect x="72" y="72" width="880" height="880" rx="214"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1024" height="1024" fill="none"/>
+  <g filter="url(#softShadow)">
+    <rect x="72" y="72" width="880" height="880" rx="214" fill="url(#bg)"/>
+    <rect x="72" y="72" width="880" height="880" rx="214" fill="url(#topGlow)"/>
+    <rect x="72" y="72" width="880" height="880" rx="214" fill="url(#memoryGlow)"/>
+    <rect x="92" y="92" width="840" height="840" rx="194" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/>
+
+    <g clip-path="url(#clip)" opacity="0.32">
+      <path d="M168 294H856M168 512H856M168 730H856M294 168V856M512 168V856M730 168V856" stroke="#94A3B8" stroke-opacity="0.16" stroke-width="2"/>
+      <path d="M248 230L794 776M794 230L248 776" stroke="#38BDF8" stroke-opacity="0.08" stroke-width="2"/>
+    </g>
+
+    <g filter="url(#lineGlow)">
+      <path d="M346 250V774" fill="none" stroke="url(#mark)" stroke-width="62" stroke-linecap="round"/>
+      <path d="M346 250C596 216 736 326 676 448C644 513 570 533 346 512" fill="none" stroke="url(#mark)" stroke-width="62" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M346 512C620 490 748 616 668 720C610 796 482 802 346 774" fill="none" stroke="url(#mark)" stroke-width="62" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <g fill="none" stroke="#020617" stroke-opacity="0.72" stroke-linecap="round" stroke-width="24">
+      <path d="M346 250V774"/>
+      <path d="M346 250C596 216 736 326 676 448C644 513 570 533 346 512"/>
+      <path d="M346 512C620 490 748 616 668 720C610 796 482 802 346 774"/>
+    </g>
+    <g fill="none" stroke="url(#mark)" stroke-linecap="round" stroke-linejoin="round" stroke-width="34">
+      <path d="M346 250V774"/>
+      <path d="M346 250C596 216 736 326 676 448C644 513 570 533 346 512"/>
+      <path d="M346 512C620 490 748 616 668 720C610 796 482 802 346 774"/>
+    </g>
+
+    <g stroke="url(#nodeStroke)" stroke-width="18">
+      <circle cx="346" cy="250" r="46" fill="#0F172A"/>
+      <circle cx="346" cy="512" r="54" fill="#0A0A0B"/>
+      <circle cx="346" cy="774" r="46" fill="#0F172A"/>
+      <circle cx="638" cy="320" r="40" fill="#111827"/>
+      <circle cx="690" cy="512" r="44" fill="#09090B"/>
+      <circle cx="638" cy="704" r="40" fill="#111827"/>
+    </g>
+
+    <g fill="#E0F2FE" opacity="0.95">
+      <circle cx="331" cy="235" r="8"/>
+      <circle cx="331" cy="497" r="8"/>
+      <circle cx="331" cy="759" r="8"/>
+      <circle cx="625" cy="307" r="7"/>
+      <circle cx="677" cy="499" r="7"/>
+      <circle cx="625" cy="691" r="7"/>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Bytro icon concept 2">
+  <defs>
+    <linearGradient id="bg" x1="184" y1="120" x2="840" y2="912" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#101827"/>
+      <stop offset="1" stop-color="#07090B"/>
+    </linearGradient>
+    <linearGradient id="flow" x1="260" y1="316" x2="764" y2="708" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="0.5" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#34D399"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="34" stdDeviation="42" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="0" stdDeviation="18" flood-color="#06B6D4" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="none"/>
+  <g filter="url(#shadow)">
+    <rect x="72" y="72" width="880" height="880" rx="214" fill="url(#bg)"/>
+    <rect x="96" y="96" width="832" height="832" rx="190" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/>
+    <g filter="url(#glow)" fill="none" stroke="url(#flow)" stroke-width="58" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M274 520C350 338 530 300 660 392C804 494 740 716 542 724C420 730 340 664 314 586"/>
+      <path d="M640 338L720 386L680 474"/>
+    </g>
+    <g stroke="#DFF7FF" stroke-width="16">
+      <circle cx="300" cy="544" r="52" fill="#0C1220"/>
+      <circle cx="520" cy="328" r="52" fill="#0C1220"/>
+      <circle cx="724" cy="520" r="52" fill="#0C1220"/>
+      <circle cx="520" cy="724" r="52" fill="#0C1220"/>
+    </g>
+    <circle cx="300" cy="544" r="13" fill="#67E8F9"/>
+    <circle cx="520" cy="328" r="13" fill="#60A5FA"/>
+    <circle cx="724" cy="520" r="13" fill="#34D399"/>
+    <circle cx="520" cy="724" r="13" fill="#A78BFA"/>
+  </g>
+</svg>

@@ -1,0 +1,52 @@
+appId: com.bytro.app
+productName: Bytro
+copyright: Copyright © 2026 Bytro
+
+directories:
+  buildResources: resources
+  output: dist
+
+files:
+  - out/**/*
+  - "!out/**/*.map"
+  - package.json
+
+extraResources:
+  - from: resources/
+    to: resources/
+    filter:
+      - "**/*"
+      - "!entitlements.mac.plist"
+
+asar: true
+
+mac:
+  icon: resources/icons/icon.icns
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  artifactName: ${productName}-${version}-${arch}-mac.${ext}
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+  hardenedRuntime: true
+  gatekeeperAssess: false
+
+dmg:
+  title: ${productName} ${version}
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+publish:
+  provider: github
+  owner: wzasd
+  repo: Aether
+
+npmRebuild: true
+
+nodeGypRebuild: false

@@ -1,14 +1,14 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
 import { join } from 'path'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { initDatabase } from './core/db'
+import { closeDatabase, initDatabase } from './core/db'
 import { registerIpcHandlers } from './ipc'
 import { safeOpenExternal } from './utils/external'
-import { aiEngine } from './ai/engine'
-import { ClaudeCLIProvider } from './ai/providers/claude-cli'
+import { checkForUpdatesSilent } from './ipc/update'
+
+let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
-  const mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 800,
@@ -18,43 +18,61 @@ function createWindow(): void {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
     webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
+      preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     }
   })
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+  mainWindow = win
+
+  win.on('ready-to-show', () => {
+    win.show()
   })
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
+  win.webContents.setWindowOpenHandler((details) => {
     void safeOpenExternal(details.url)
     return { action: 'deny' }
   })
 
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    win.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    win.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.bytro.app')
+  if (process.env.NODE_ENV !== 'production' && process.env.TRAE_SANDBOX) {
+    app.commandLine.appendSwitch('no-sandbox')
+    app.commandLine.appendSwitch('disable-gpu-sandbox')
+  }
 
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
+  app.setAppUserModelId('com.bytro.app')
 
-  // 初始化 AI 引擎
-  const claudeProvider = new ClaudeCLIProvider()
-  aiEngine.setProvider(claudeProvider)
-
-  initDatabase()
+  try {
+    initDatabase()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('Failed to initialize database:', err)
+    dialog.showErrorBox('Bytro database initialization failed', message)
+    app.quit()
+    return
+  }
   registerIpcHandlers()
   createWindow()
+
+  // Silent update check on startup (5s delay)
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      checkForUpdatesSilent().then((info) => {
+        if (info.hasUpdate) {
+          mainWindow?.webContents.send('update:available', info)
+        }
+      })
+    }
+  }, 5000)
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -62,6 +80,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  closeDatabase()
   if (process.platform !== 'darwin') {
     app.quit()
   }

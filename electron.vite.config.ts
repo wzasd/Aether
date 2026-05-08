@@ -6,7 +6,9 @@ export default defineConfig({
   main: {
     build: {
       lib: {
-        entry: resolve('src/main/index.ts')
+        entry: resolve('src/main/index.ts'),
+        formats: ['cjs'],
+        fileName: (_format, _entryName) => 'index.js'
       }
     },
     plugins: [externalizeDepsPlugin()]
@@ -14,7 +16,9 @@ export default defineConfig({
   preload: {
     build: {
       lib: {
-        entry: resolve('src/preload/index.ts')
+        entry: resolve('src/preload/index.ts'),
+        formats: ['cjs'],
+        fileName: (_format, _entryName) => 'index.js'
       }
     },
     plugins: [externalizeDepsPlugin()]

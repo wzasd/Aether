@@ -68,14 +68,15 @@ interface MemoryState {
   approveCandidate: (id: string, workspaceId: string) => Promise<void>
   rejectCandidate: (id: string) => Promise<void>
   loadProjectItems: (workspaceId: string) => Promise<void>
-  loadProjectMemoryText: (workspacePath: string) => Promise<void>
-  appendProjectMemory: (workspacePath: string, section: string, entry: string) => Promise<void>
-  loadAgentMemoryText: (workspacePath: string, agentId: string) => Promise<void>
+  loadProjectMemoryText: (workspaceId: string) => Promise<void>
+  appendProjectMemory: (workspaceId: string, section: string, entry: string) => Promise<void>
+  loadAgentMemoryText: (workspaceId: string, agentId: string) => Promise<void>
   loadLatestSummary: (conversationId: string) => Promise<void>
   createSummary: (data: { conversation_id: string; summary: string; completed_items?: string; pending_items?: string; changed_files?: string; risks?: string; next_steps?: string; from_message_id?: string; to_message_id?: string }) => Promise<string>
   recall: (query: string, options: { scope?: string; workspaceId?: string; conversationId?: string; limit?: number }) => Promise<void>
-  createAgentSession: (data: { workspace_id: string; conversation_id: string; agent_id: string; provider: string; external_session_id?: string; seq: number; status: string }) => Promise<string>
+  createAgentSession: (data: { workspace_id: string; conversation_id: string; agent_id: string; provider: string; external_session_id?: string; seq?: number; status: string }) => Promise<string>
   endAgentSession: (id: string) => Promise<void>
+  endAgentSessionByExternalId: (externalSessionId: string) => Promise<void>
   loadAgentSessions: (conversationId: string) => Promise<void>
 }
 
@@ -99,21 +100,19 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   },
 
   approveCandidate: async (id, workspaceId) => {
-    await window.api.memory.updateCandidateStatus(id, 'approved')
-    const candidate = await window.api.memory.listCandidates(workspaceId).then((cs: any[]) => cs.find((c: any) => c.id === id))
-    if (candidate) {
-      await window.api.memory.createProjectItem({
-        workspace_id: candidate.workspace_id,
-        kind: candidate.kind,
-        title: candidate.title,
-        content: candidate.content
-      })
-      await window.api.memory.updateCandidateStatus(id, 'materialized')
-    }
+    await window.api.memory.materializeCandidate(id)
+    const [candidates, projectItems] = await Promise.all([
+      window.api.memory.listCandidates(workspaceId),
+      window.api.memory.listProjectItems(workspaceId)
+    ])
+    set({ candidates, projectItems })
   },
 
   rejectCandidate: async (id) => {
     await window.api.memory.updateCandidateStatus(id, 'rejected')
+    set((state) => ({
+      candidates: state.candidates.filter((c) => c.id !== id)
+    }))
   },
 
   loadProjectItems: async (workspaceId) => {
@@ -121,19 +120,19 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     set({ projectItems })
   },
 
-  loadProjectMemoryText: async (workspacePath) => {
-    const projectMemoryText = await window.api.memory.readProjectMemory(workspacePath)
+  loadProjectMemoryText: async (workspaceId) => {
+    const projectMemoryText = await window.api.memory.readProjectMemory(workspaceId)
     set({ projectMemoryText })
   },
 
-  appendProjectMemory: async (workspacePath, section, entry) => {
-    await window.api.memory.appendProjectMemory(workspacePath, section, entry)
-    const projectMemoryText = await window.api.memory.readProjectMemory(workspacePath)
+  appendProjectMemory: async (workspaceId, section, entry) => {
+    await window.api.memory.appendProjectMemory(workspaceId, section, entry)
+    const projectMemoryText = await window.api.memory.readProjectMemory(workspaceId)
     set({ projectMemoryText })
   },
 
-  loadAgentMemoryText: async (workspacePath, agentId) => {
-    const agentMemoryText = await window.api.memory.readAgentMemory(workspacePath, agentId)
+  loadAgentMemoryText: async (workspaceId, agentId) => {
+    const agentMemoryText = await window.api.memory.readAgentMemory(workspaceId, agentId)
     set({ agentMemoryText })
   },
 
@@ -153,12 +152,34 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   },
 
   createAgentSession: async (data) => {
-    const { id } = await window.api.memory.createAgentSession(data)
-    return id
+    const session = await window.api.memory.createAgentSession(data)
+    set((state) => ({
+      agentSessions: [
+        ...state.agentSessions.filter((existing) => existing.id !== session.id),
+        session as AgentSession
+      ]
+    }))
+    return session.id
   },
 
   endAgentSession: async (id) => {
     await window.api.memory.endAgentSession(id)
+    set((state) => ({
+      agentSessions: state.agentSessions.map((session) =>
+        session.id === id ? { ...session, status: 'ended', ended_at: Math.floor(Date.now() / 1000) } : session
+      )
+    }))
+  },
+
+  endAgentSessionByExternalId: async (externalSessionId) => {
+    await window.api.memory.endAgentSessionByExternalId(externalSessionId)
+    set((state) => ({
+      agentSessions: state.agentSessions.map((session) =>
+        session.external_session_id === externalSessionId
+          ? { ...session, status: 'ended', ended_at: Math.floor(Date.now() / 1000) }
+          : session
+      )
+    }))
   },
 
   loadAgentSessions: async (conversationId) => {

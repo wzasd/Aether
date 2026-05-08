@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude CLI Stream-JSON 输出展示</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; padding: 32px; max-width: 960px; margin: 0 auto; }
+h2 { font-size: 20px; margin-bottom: 4px; }
+.subtitle { color: #94a3b8; font-size: 13px; margin-bottom: 24px; }
+
+.event-group { margin-bottom: 24px; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; }
+.event-group h3 { font-size: 14px; color: #cbd5e1; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.event-group h3 .badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+
+.badge-system { background: #3b82f622; color: #3b82f6; border: 1px solid #3b82f655; }
+.badge-assistant { background: #8b5cf622; color: #8b5cf6; border: 1px solid #8b5cf655; }
+.badge-user { background: #16a34a22; color: #16a34a; border: 1px solid #16a34a55; }
+.badge-result { background: #f59e0b22; color: #f59e0b; border: 1px solid #f59e0b55; }
+
+.event-detail { background: #1e293b; border-radius: 6px; padding: 12px; margin-bottom: 8px; font-size: 13px; }
+.event-detail .key { color: #94a3b8; }
+.event-detail .value { color: #e2e8f0; }
+.event-detail .highlight { color: #f59e0b; font-weight: 600; }
+
+.tool-card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+.tool-card .tool-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.tool-card .tool-name { font-weight: 600; color: #8b5cf6; }
+.tool-card .tool-status { font-size: 11px; padding: 2px 6px; border-radius: 3px; }
+.tool-card .tool-input { background: #0f172a; border-radius: 4px; padding: 8px; font-size: 12px; color: #94a3b8; margin-bottom: 6px; }
+.tool-card .tool-result { background: #0f172a; border-radius: 4px; padding: 8px; font-size: 12px; color: #16a34a; }
+
+.msg-bubble { padding: 12px 16px; border-radius: 8px; margin-bottom: 8px; font-size: 14px; line-height: 1.6; }
+.msg-user { background: #1e40af33; border: 1px solid #1e40af55; margin-left: 40px; }
+.msg-assistant { background: #1e293b; border: 1px solid #334155; }
+
+.flow-diagram { background: #1e293b; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+.flow-step { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.flow-step .step-num { width: 24px; height: 24px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; }
+.flow-step .step-num.s1 { background: #3b82f6; color: white; }
+.flow-step .step-num.s2 { background: #8b5cf6; color: white; }
+.flow-step .step-num.s3 { background: #16a34a; color: white; }
+.flow-step .step-num.s4 { background: #8b5cf6; color: white; }
+.flow-step .step-num.s5 { background: #f59e0b; color: white; }
+.flow-arrow { text-align: center; color: #475569; font-size: 12px; padding: 2px 0; }
+
+.section-title { font-size: 16px; color: #f59e0b; margin: 24px 0 12px; border-bottom: 1px solid #334155; padding-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<h2>Claude CLI Stream-JSON 实际输出展示</h2>
+<p class="subtitle">请求: "请读取当前目录的 package.json 文件内容" — 完整的 tool call 生命周期</p>
+
+<div class="section-title">事件流时序</div>
+
+<div class="flow-diagram">
+  <div class="flow-step">
+    <div class="step-num s1">1</div>
+    <div><strong>system/init</strong> — 会话初始化，返回 session_id、tools 列表、model、permissionMode</div>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step">
+    <div class="step-num s2">2</div>
+    <div><strong>assistant</strong> — AI 决定调用 <code>Read</code> 工具，输出 <code>tool_use</code> content block</div>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step">
+    <div class="step-num s3">3</div>
+    <div><strong>user</strong> — CLI 自动执行工具，返回 <code>tool_result</code>（文件内容）</div>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step">
+    <div class="step-num s4">4</div>
+    <div><strong>assistant</strong> — AI 根据工具结果生成最终文本回复</div>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step">
+    <div class="step-num s5">5</div>
+    <div><strong>result</strong> — 会话结束，返回 duration、cost、usage 统计</div>
+  </div>
+</div>
+
+<div class="section-title">逐事件详细解析</div>
+
+<!-- Event 1: system/init -->
+<div class="event-group">
+  <h3><span class="badge badge-system">system/init</span> 会话初始化</h3>
+  <div class="event-detail">
+    <div><span class="key">session_id:</span> <span class="value">1a3e0c47-59f4-4468-8ca0-3b5fd499da39</span></div>
+    <div><span class="key">model:</span> <span class="value">claude-sonnet-4-6</span></div>
+    <div><span class="key">permissionMode:</span> <span class="highlight">plan</span></div>
+    <div><span class="key">tools:</span> <span class="value">22 个内置工具 (Bash, Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, ...)</span></div>
+    <div><span class="key">cwd:</span> <span class="value">/Users/wangzhao/Documents/agentWorkSpace/catwork</span></div>
+  </div>
+</div>
+
+<!-- Event 2: assistant with tool_use -->
+<div class="event-group">
+  <h3><span class="badge badge-assistant">assistant</span> AI 调用工具</h3>
+  <div class="tool-card">
+    <div class="tool-header">
+      <span class="tool-name">Read</span>
+      <span class="tool-status" style="background:#8b5cf622;color:#8b5cf6;border:1px solid #8b5cf655;">tool_use</span>
+    </div>
+    <div class="tool-input">
+      <span class="key">file_path:</span> /Users/wangzhao/Documents/agentWorkSpace/catwork/package.json
+    </div>
+  </div>
+</div>
+
+<!-- Event 3: user with tool_result -->
+<div class="event-group">
+  <h3><span class="badge badge-user">user</span> 工具执行结果</h3>
+  <div class="tool-card">
+    <div class="tool-header">
+      <span class="tool-name">Read</span>
+      <span class="tool-status" style="background:#16a34a22;color:#16a34a;border:1px solid #16a34a55;">tool_result</span>
+    </div>
+    <div class="tool-result">
+<pre>{
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.4"
+  }
+}</pre>
+    </div>
+    <div style="font-size:11px;color:#94a3b8;margin-top:4px;">
+      <span class="key">tool_use_result.type:</span> text
+      <span class="key"> | file.filePath:</span> package.json
+      <span class="key"> | numLines:</span> 6
+    </div>
+  </div>
+</div>
+
+<!-- Event 4: assistant text response -->
+<div class="event-group">
+  <h3><span class="badge badge-assistant">assistant</span> AI 文本回复</h3>
+  <div class="msg-bubble msg-assistant">
+    当前目录的 `package.json` 内容非常简单，只有一个开发依赖：<br><br>
+    - **@tailwindcss/postcss**: `^4.2.4` — Tailwind CSS 的 PostCSS 插件<br><br>
+    看起来项目还处于早期阶段，依赖尚未完全配置。需要我做什么进一步的操作吗？
+  </div>
+</div>
+
+<!-- Event 5: result -->
+<div class="event-group">
+  <h3><span class="badge badge-result">result</span> 会话结束统计</h3>
+  <div class="event-detail">
+    <div><span class="key">subtype:</span> <span class="highlight">success</span></div>
+    <div><span class="key">duration_ms:</span> <span class="value">20,069ms</span></div>
+    <div><span class="key">duration_api_ms:</span> <span class="value">20,045ms</span></div>
+    <div><span class="key">num_turns:</span> <span class="value">2</span> (用户消息 + 工具结果)</div>
+    <div><span class="key">total_cost_usd:</span> <span class="highlight">$0.224</span></div>
+    <div><span class="key">input_tokens:</span> <span class="value">74,240</span></div>
+    <div><span class="key">output_tokens:</span> <span class="value">87</span></div>
+    <div><span class="key">contextWindow:</span> <span class="value">200,000</span></div>
+    <div><span class="key">permission_denials:</span> <span class="value">[]</span> (无权限拒绝)</div>
+    <div><span class="key">session_id:</span> <span class="value">1a3e0c47-59f4-4468-8ca0-3b5fd499da39</span> (可用于 --resume 恢复)</div>
+  </div>
+</div>
+
+<div class="section-title">关键发现</div>
+
+<div class="event-group" style="border-color:#f59e0b55;">
+  <h3 style="color:#f59e0b;">Stream-JSON 协议特性总结</h3>
+  <div class="event-detail">
+    <div><span class="highlight">1.</span> <span class="value">5 种事件类型: system(init/hook), assistant, user(tool_result), result</span></div>
+    <div><span class="highlight">2.</span> <span class="value">Tool call 完整生命周期: tool_use → 自动执行 → tool_result → AI 继续回复</span></div>
+    <div><span class="highlight">3.</span> <span class="value">会话恢复: session_id 可用于 --resume 恢复上下文（解决历史问题！）</span></div>
+    <div><span class="highlight">4.</span> <span class="value">成本/用量: total_cost_usd + modelUsage 精细到每个模型</span></div>
+    <div><span class="highlight">5.</span> <span class="value">权限模式: plan 模式下工具自动执行，无需审批交互</span></div>
+    <div><span class="highlight">6.</span> <span class="value">child_process 即可: 不需要 PTY，stdin/stdout JSON 流足够</span></div>
+  </div>
+  <div style="font-size:12px;color:#f59e0b;margin-top:8px;">
+    注意: 本次测试用 plan 模式（工具自动执行）。default 模式下会输出 permission_request 事件，需要通过 stdin 回应。
+  </div>
+</div>
+
+</body>
+</html>

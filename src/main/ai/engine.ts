@@ -1,59 +1,95 @@
-import { AIProvider, Session, SessionConfig } from './provider'
+import type { CLIProvider, ConfigOption, ModelInfo, Session, SessionConfig } from './provider'
 import type { AIEvent } from './types'
+import type { ProviderRegistry } from './provider-registry'
+import { providerRegistry } from './provider-registry'
+
+type SessionRecord = { session: Session; provider: CLIProvider }
 
 export class AIEngine {
-  private provider: AIProvider | null = null
-  private sessions: Map<string, Session> = new Map()
+  private registry: ProviderRegistry
+  private sessions: Map<string, SessionRecord> = new Map()
 
-  setProvider(provider: AIProvider): void {
-    this.provider = provider
+  constructor(registry: ProviderRegistry = providerRegistry) {
+    this.registry = registry
   }
 
   async startSession(config: SessionConfig): Promise<Session> {
-    if (!this.provider) throw new Error('No AI provider configured')
-    const session = await this.provider.startSession(config)
-    this.sessions.set(session.id, session)
+    const provider = this.registry.get(config.providerType)
+    if (!provider) throw new Error(`Provider ${config.providerType} not available`)
+    const session = await provider.startSession(config)
+    this.sessions.set(session.id, { session, provider })
     return session
   }
 
   async endSession(sessionId: string): Promise<void> {
-    if (!this.provider) return
-    await this.provider.endSession(sessionId)
+    const record = this.sessions.get(sessionId)
+    if (!record) return
+    await record.provider.endSession(sessionId)
     this.sessions.delete(sessionId)
   }
 
   sendMessage(sessionId: string, content: string): void {
-    if (!this.provider) throw new Error('No AI provider configured')
-    this.provider.sendMessage(sessionId, content)
+    const record = this.sessions.get(sessionId)
+    if (!record) throw new Error('Session not found')
+    record.provider.sendMessage(sessionId, content)
   }
 
   respondPermission(sessionId: string, approved: boolean): void {
-    if (!this.provider) return
-    this.provider.respondPermission(sessionId, approved)
+    const record = this.sessions.get(sessionId)
+    if (!record) return
+    record.provider.respondPermission(sessionId, approved)
   }
 
   respondQuestion(sessionId: string, answer: string): void {
-    if (!this.provider) return
-    this.provider.respondQuestion(sessionId, answer)
+    const record = this.sessions.get(sessionId)
+    if (!record) return
+    record.provider.respondQuestion(sessionId, answer)
   }
 
   abort(sessionId: string): void {
-    if (!this.provider) return
-    this.provider.abort(sessionId)
+    const record = this.sessions.get(sessionId)
+    if (!record) return
+    record.provider.abort(sessionId)
   }
 
   onEvent(sessionId: string, handler: (event: AIEvent) => void): void {
-    if (!this.provider) return
-    this.provider.onEvent(sessionId, handler)
+    const record = this.sessions.get(sessionId)
+    if (!record) return
+    record.provider.onEvent(sessionId, handler)
   }
 
   offEvent(sessionId: string, handler: (event: AIEvent) => void): void {
-    if (!this.provider) return
-    this.provider.offEvent(sessionId, handler)
+    const record = this.sessions.get(sessionId)
+    if (!record) return
+    record.provider.offEvent(sessionId, handler)
   }
 
   getSession(sessionId: string): Session | undefined {
-    return this.sessions.get(sessionId)
+    return this.sessions.get(sessionId)?.session
+  }
+
+  getAvailableModels(sessionId: string): ModelInfo[] {
+    const record = this.sessions.get(sessionId)
+    if (!record?.provider.getAvailableModels) return []
+    return record.provider.getAvailableModels(sessionId)
+  }
+
+  async setModel(sessionId: string, modelId: string): Promise<void> {
+    const record = this.sessions.get(sessionId)
+    if (!record?.provider.setModel) return
+    await record.provider.setModel(sessionId, modelId)
+  }
+
+  getConfigOptions(sessionId: string): ConfigOption[] | null {
+    const record = this.sessions.get(sessionId)
+    if (!record?.provider.getConfigOptions) return null
+    return record.provider.getConfigOptions(sessionId)
+  }
+
+  async setConfigOption(sessionId: string, optionId: string, value: string): Promise<void> {
+    const record = this.sessions.get(sessionId)
+    if (!record?.provider.setConfigOption) return
+    await record.provider.setConfigOption(sessionId, optionId, value)
   }
 }
 

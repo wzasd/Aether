@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Bytro companion line icon 4">
+  <defs>
+    <linearGradient id="bg" x1="132" y1="96" x2="900" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#101827"/>
+      <stop offset="1" stop-color="#07080B"/>
+    </linearGradient>
+    <linearGradient id="loop" x1="300" y1="370" x2="724" y2="650" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FDE68A"/>
+      <stop offset="0.46" stop-color="#67E8F9"/>
+      <stop offset="1" stop-color="#34D399"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="34" stdDeviation="42" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="none"/>
+  <g filter="url(#shadow)">
+    <rect x="72" y="72" width="880" height="880" rx="214" fill="url(#bg)"/>
+    <path d="M498 264C374 276 282 378 282 512C282 646 374 748 498 760" fill="none" stroke="#22D3EE" stroke-width="54" stroke-linecap="round"/>
+    <path d="M526 264C650 276 742 378 742 512C742 646 650 748 526 760" fill="none" stroke="#6366F1" stroke-width="54" stroke-linecap="round"/>
+    <path d="M348 516C402 450 482 450 536 516C580 570 640 574 700 526" fill="none" stroke="#07101C" stroke-width="78" stroke-linecap="round"/>
+    <path d="M324 588C392 638 468 622 526 556C578 498 640 490 700 536" fill="none" stroke="#07101C" stroke-width="78" stroke-linecap="round"/>
+    <path d="M348 516C402 450 482 450 536 516C580 570 640 574 700 526" fill="none" stroke="url(#loop)" stroke-width="34" stroke-linecap="round"/>
+    <path d="M324 588C392 638 468 622 526 556C578 498 640 490 700 536" fill="none" stroke="url(#loop)" stroke-width="34" stroke-linecap="round"/>
+    <circle cx="512" cy="512" r="18" fill="#DDF5FF"/>
+  </g>
+</svg>

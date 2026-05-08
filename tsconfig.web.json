@@ -6,10 +6,12 @@
     "jsx": "react-jsx",
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
+    "skipLibCheck": true,
     "outDir": "./out/renderer",
     "paths": {
       "@renderer/*": ["./src/renderer/src/*"]
     }
   },
-  "include": ["src/renderer/src/**/*"]
+  "include": ["src/renderer/src/**/*"],
+  "exclude": ["src/renderer/src/**/*.test.ts", "src/renderer/src/**/*.test.tsx"]
 }

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="540" viewBox="0 0 1800 540" role="img" aria-label="Bytro icon concept preview">
+  <rect width="1800" height="540" fill="#F4F4F5"/>
+  <g transform="translate(80 70) scale(0.36)">
+    <svg width="1024" height="1024" viewBox="0 0 1024 1024">
+      <defs>
+        <linearGradient id="p1bg" x1="160" y1="120" x2="860" y2="900" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#172033"/><stop offset="1" stop-color="#08090D"/></linearGradient>
+        <linearGradient id="p1line" x1="300" y1="260" x2="760" y2="760" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#67E8F9"/><stop offset="0.58" stop-color="#3B82F6"/><stop offset="1" stop-color="#8B5CF6"/></linearGradient>
+        <filter id="p1shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="34" stdDeviation="42" flood-color="#000000" flood-opacity="0.42"/></filter>
+      </defs>
+      <g filter="url(#p1shadow)"><rect x="72" y="72" width="880" height="880" rx="214" fill="url(#p1bg)"/><rect x="96" y="96" width="832" height="832" rx="190" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/><g fill="none" stroke="url(#p1line)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"><path d="M312 612L512 312L712 612L512 726Z"/><path d="M512 312V726"/><path d="M312 612H712"/></g><g stroke="#E0F2FE" stroke-width="18"><circle cx="512" cy="312" r="72" fill="#0F172A"/><circle cx="312" cy="612" r="72" fill="#0B1220"/><circle cx="712" cy="612" r="72" fill="#0B1220"/><circle cx="512" cy="726" r="58" fill="#101827"/></g><circle cx="512" cy="312" r="18" fill="#67E8F9"/><circle cx="312" cy="612" r="18" fill="#60A5FA"/><circle cx="712" cy="612" r="18" fill="#A78BFA"/><circle cx="512" cy="726" r="14" fill="#34D399"/></g>
+    </svg>
+  </g>
+  <g transform="translate(510 70) scale(0.36)">
+    <svg width="1024" height="1024" viewBox="0 0 1024 1024">
+      <defs>
+        <linearGradient id="p2bg" x1="184" y1="120" x2="840" y2="912" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#101827"/><stop offset="1" stop-color="#07090B"/></linearGradient>
+        <linearGradient id="p2flow" x1="260" y1="316" x2="764" y2="708" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#22D3EE"/><stop offset="0.5" stop-color="#3B82F6"/><stop offset="1" stop-color="#34D399"/></linearGradient>
+        <filter id="p2shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="34" stdDeviation="42" flood-color="#000000" flood-opacity="0.42"/></filter>
+      </defs>
+      <g filter="url(#p2shadow)"><rect x="72" y="72" width="880" height="880" rx="214" fill="url(#p2bg)"/><rect x="96" y="96" width="832" height="832" rx="190" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/><g fill="none" stroke="url(#p2flow)" stroke-width="58" stroke-linecap="round" stroke-linejoin="round"><path d="M274 520C350 338 530 300 660 392C804 494 740 716 542 724C420 730 340 664 314 586"/><path d="M640 338L720 386L680 474"/></g><g stroke="#DFF7FF" stroke-width="16"><circle cx="300" cy="544" r="52" fill="#0C1220"/><circle cx="520" cy="328" r="52" fill="#0C1220"/><circle cx="724" cy="520" r="52" fill="#0C1220"/><circle cx="520" cy="724" r="52" fill="#0C1220"/></g><circle cx="300" cy="544" r="13" fill="#67E8F9"/><circle cx="520" cy="328" r="13" fill="#60A5FA"/><circle cx="724" cy="520" r="13" fill="#34D399"/><circle cx="520" cy="724" r="13" fill="#A78BFA"/></g>
+    </svg>
+  </g>
+  <g transform="translate(940 70) scale(0.36)">
+    <svg width="1024" height="1024" viewBox="0 0 1024 1024">
+      <defs>
+        <linearGradient id="p3bg" x1="160" y1="112" x2="860" y2="912" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#171B2A"/><stop offset="1" stop-color="#08090D"/></linearGradient>
+        <linearGradient id="p3panel" x1="248" y1="262" x2="776" y2="762" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#38BDF8"/><stop offset="0.5" stop-color="#3B82F6"/><stop offset="1" stop-color="#8B5CF6"/></linearGradient>
+        <filter id="p3shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="34" stdDeviation="42" flood-color="#000000" flood-opacity="0.42"/></filter>
+      </defs>
+      <g filter="url(#p3shadow)"><rect x="72" y="72" width="880" height="880" rx="214" fill="url(#p3bg)"/><rect x="96" y="96" width="832" height="832" rx="190" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/><rect x="246" y="274" width="532" height="476" rx="96" fill="#080C14" stroke="url(#p3panel)" stroke-width="38"/><path d="M264 410H760" stroke="url(#p3panel)" stroke-width="34" stroke-linecap="round"/><path d="M414 430V730" stroke="url(#p3panel)" stroke-width="28" stroke-linecap="round"/><path d="M502 532H670M502 626H626" stroke="#E0F2FE" stroke-opacity="0.84" stroke-width="34" stroke-linecap="round"/><circle cx="334" cy="342" r="24" fill="#67E8F9"/><circle cx="414" cy="342" r="24" fill="#60A5FA"/><circle cx="494" cy="342" r="24" fill="#A78BFA"/></g>
+    </svg>
+  </g>
+  <g transform="translate(1370 70) scale(0.36)">
+    <svg width="1024" height="1024" viewBox="0 0 1024 1024">
+      <defs>
+        <linearGradient id="p4bg" x1="180" y1="112" x2="844" y2="912" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#111827"/><stop offset="1" stop-color="#07090B"/></linearGradient>
+        <linearGradient id="p4spark" x1="300" y1="270" x2="730" y2="760" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#A78BFA"/><stop offset="0.48" stop-color="#3B82F6"/><stop offset="1" stop-color="#34D399"/></linearGradient>
+        <filter id="p4shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="34" stdDeviation="42" flood-color="#000000" flood-opacity="0.42"/></filter>
+      </defs>
+      <g filter="url(#p4shadow)"><rect x="72" y="72" width="880" height="880" rx="214" fill="url(#p4bg)"/><rect x="96" y="96" width="832" height="832" rx="190" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/><g fill="none" stroke="url(#p4spark)" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"><path d="M512 266V758"/><path d="M314 414L512 266L710 414"/><path d="M314 610L512 758L710 610"/><path d="M314 414V610"/><path d="M710 414V610"/><path d="M314 414L710 610"/><path d="M710 414L314 610"/></g><g stroke="#F5F3FF" stroke-width="16"><circle cx="512" cy="266" r="54" fill="#100F1A"/><circle cx="314" cy="414" r="54" fill="#100F1A"/><circle cx="710" cy="414" r="54" fill="#100F1A"/><circle cx="314" cy="610" r="54" fill="#100F1A"/><circle cx="710" cy="610" r="54" fill="#100F1A"/><circle cx="512" cy="758" r="54" fill="#100F1A"/></g><circle cx="512" cy="266" r="13" fill="#A78BFA"/><circle cx="314" cy="414" r="13" fill="#60A5FA"/><circle cx="710" cy="414" r="13" fill="#67E8F9"/><circle cx="314" cy="610" r="13" fill="#34D399"/><circle cx="710" cy="610" r="13" fill="#3B82F6"/><circle cx="512" cy="758" r="13" fill="#6EE7B7"/></g>
+    </svg>
+  </g>
+  <g fill="#27272A" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="34" font-weight="600">
+    <text x="232" y="490">01 Network</text>
+    <text x="676" y="490">02 Flow</text>
+    <text x="1080" y="490">03 Workbench</text>
+    <text x="1516" y="490">04 Memory</text>
+  </g>
+</svg>

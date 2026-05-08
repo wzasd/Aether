@@ -20,7 +20,7 @@ interface WorkspaceState {
   deleteWorkspace: (id: string) => Promise<void>
 }
 
-export const useWorkspaceStore = create<WorkspaceState>((set) => ({
+export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
   currentWorkspaceId: null,
   loading: false,
@@ -29,7 +29,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set({ loading: true })
     try {
       const workspaces = await window.api.workspace.list()
-      set({ workspaces, loading: false })
+      const currentWorkspaceId = get().currentWorkspaceId
+      const nextWorkspaceId = currentWorkspaceId && workspaces.some((w) => w.id === currentWorkspaceId)
+        ? currentWorkspaceId
+        : workspaces[0]?.id ?? null
+      set({
+        workspaces,
+        currentWorkspaceId: nextWorkspaceId,
+        loading: false
+      })
     } catch (err) {
       console.error('Failed to load workspaces:', err)
       set({ loading: false })
@@ -41,7 +49,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   createWorkspace: async (data) => {
     try {
       const workspace = await window.api.workspace.create(data)
-      set((state) => ({ workspaces: [workspace, ...state.workspaces] }))
+      set((state) => ({
+        workspaces: [workspace, ...state.workspaces],
+        currentWorkspaceId: state.currentWorkspaceId ?? workspace.id
+      }))
       return workspace
     } catch (err) {
       console.error('Failed to create workspace:', err)

@@ -3,36 +3,80 @@ import { randomUUID } from 'crypto'
 import * as memIdx from '../core/memory-index.js'
 import * as memFs from '../core/memory-fs.js'
 import { getDb } from '../core/db.js'
+import type { MemoryScope } from '../core/memory-index.js'
+
+type RecallOptions = {
+  scope?: MemoryScope
+  workspaceId?: string
+  conversationId?: string
+  limit?: number
+}
+
+const MEMORY_SCOPES = new Set<MemoryScope>(['project', 'conversation', 'all'])
+
+function normalizeRecallOptions(options: { scope?: string; workspaceId?: string; conversationId?: string; limit?: number } = {}): RecallOptions {
+  if (options.scope && !MEMORY_SCOPES.has(options.scope as MemoryScope)) {
+    throw new Error(`Invalid memory scope: ${options.scope}`)
+  }
+  return {
+    ...options,
+    scope: options.scope as MemoryScope | undefined
+  }
+}
+
+function getWorkspacePath(workspaceId: string): string {
+  const db = getDb()
+  const workspace = db.prepare('SELECT repo_path FROM workspaces WHERE id = ?').get(workspaceId) as { repo_path: string | null } | undefined
+  if (!workspace?.repo_path) {
+    throw new Error('Workspace has no repository path')
+  }
+  return workspace.repo_path
+}
+
+function formatProjectMemoryEntry(candidate: any): string {
+  return [
+    `### ${candidate.title}`,
+    '',
+    `Status: active`,
+    `Kind: ${candidate.kind}`,
+    `Confidence: ${candidate.confidence}`,
+    candidate.source_conversation_id ? `Source Conversation: ${candidate.source_conversation_id}` : null,
+    candidate.source_message_id ? `Source Message: ${candidate.source_message_id}` : null,
+    '',
+    candidate.content,
+    ''
+  ].filter((line) => line !== null).join('\n')
+}
 
 export function registerMemoryIpc(): void {
   // Recall: FTS search
   ipcMain.handle('memory:recall', (_event, query: string, options: { scope?: string; workspaceId?: string; conversationId?: string; limit?: number }) => {
-    return memIdx.recallMemory(query, options)
+    return memIdx.recallMemory(query, normalizeRecallOptions(options))
   })
 
   // Project memory: read from file
-  ipcMain.handle('memory:readProjectMemory', (_event, workspacePath: string) => {
-    return memFs.readProjectMemory(workspacePath)
+  ipcMain.handle('memory:readProjectMemory', (_event, workspaceId: string) => {
+    return memFs.readProjectMemory(getWorkspacePath(workspaceId))
   })
 
   // Project memory: write to file
-  ipcMain.handle('memory:writeProjectMemory', (_event, workspacePath: string, content: string) => {
-    return memFs.writeProjectMemory(workspacePath, content)
+  ipcMain.handle('memory:writeProjectMemory', (_event, workspaceId: string, content: string) => {
+    return memFs.writeProjectMemory(getWorkspacePath(workspaceId), content)
   })
 
   // Project memory: append entry to section
-  ipcMain.handle('memory:appendProjectMemory', (_event, workspacePath: string, section: string, entry: string) => {
-    return memFs.appendProjectMemory(workspacePath, section, entry)
+  ipcMain.handle('memory:appendProjectMemory', (_event, workspaceId: string, section: string, entry: string) => {
+    return memFs.appendProjectMemory(getWorkspacePath(workspaceId), section, entry)
   })
 
   // Agent memory: read from file
-  ipcMain.handle('memory:readAgentMemory', (_event, workspacePath: string, agentId: string) => {
-    return memFs.readAgentMemory(workspacePath, agentId)
+  ipcMain.handle('memory:readAgentMemory', (_event, workspaceId: string, agentId: string) => {
+    return memFs.readAgentMemory(getWorkspacePath(workspaceId), agentId)
   })
 
   // Agent memory: write to file
-  ipcMain.handle('memory:writeAgentMemory', (_event, workspacePath: string, agentId: string, content: string) => {
-    return memFs.writeAgentMemory(workspacePath, agentId, content)
+  ipcMain.handle('memory:writeAgentMemory', (_event, workspaceId: string, agentId: string, content: string) => {
+    return memFs.writeAgentMemory(getWorkspacePath(workspaceId), agentId, content)
   })
 
   // Candidate: create
@@ -58,23 +102,70 @@ export function registerMemoryIpc(): void {
     return memIdx.getProjectMemoryByWorkspace(workspaceId)
   })
 
-  // Project memory items: create (after candidate approved)
-  ipcMain.handle('memory:createProjectItem', (_event, data: { workspace_id: string; kind: string; title: string; content: string; source_path?: string; source_hash?: string }) => {
-    const id = randomUUID()
-    memIdx.createProjectMemoryItem({ ...data, id, status: 'active' })
-    return { id }
+  // Project memory items: delete
+  ipcMain.handle('memory:deleteProjectItem', async (_event, id: string) => {
+    const item = memIdx.getProjectMemoryItemById(id)
+    if (!item) {
+      return { success: true }
+    }
+
+    const workspacePath = getWorkspacePath(item.workspace_id)
+    const removedFromSource = await memFs.removeProjectMemoryEntry(workspacePath, item)
+    if (!removedFromSource) {
+      await memFs.appendProjectMemoryDeletion(workspacePath, {
+        id: item.id,
+        kind: item.kind,
+        title: item.title
+      })
+    }
+
+    memIdx.deleteProjectMemoryItem(id)
+    return { success: true }
+  })
+
+  // Markers: list
+  ipcMain.handle('memory:listMarkers', (_event, workspaceId: string) => {
+    return memFs.listMarkers(getWorkspacePath(workspaceId))
+  })
+
+  // Markers: read
+  ipcMain.handle('memory:readMarker', (_event, workspaceId: string, name: string) => {
+    return memFs.readMarker(getWorkspacePath(workspaceId), name)
+  })
+
+  // Markers: write
+  ipcMain.handle('memory:writeMarker', (_event, workspaceId: string, name: string, content: string) => {
+    return memFs.writeMarker(getWorkspacePath(workspaceId), name, content)
+  })
+
+  // Candidate: approve + materialize to durable project memory file + read model
+  ipcMain.handle('memory:materializeCandidate', async (_event, id: string) => {
+    const candidate = memIdx.getCandidateById(id)
+    if (!candidate) {
+      throw new Error('Candidate not found')
+    }
+
+    const projectItemId = randomUUID()
+    const workspacePath = getWorkspacePath(candidate.workspace_id)
+    await memFs.appendProjectMemory(workspacePath, candidate.kind, formatProjectMemoryEntry(candidate))
+    memIdx.materializeCandidateToProjectMemory(id, projectItemId)
+    return { id: projectItemId }
   })
 
   // Agent session: create
-  ipcMain.handle('memory:createAgentSession', (_event, data: { workspace_id: string; conversation_id: string; agent_id: string; provider: string; external_session_id?: string; seq: number; status: string }) => {
+  ipcMain.handle('memory:createAgentSession', (_event, data: { workspace_id: string; conversation_id: string; agent_id: string; provider: string; external_session_id?: string; seq?: number; status: string }) => {
     const id = randomUUID()
-    memIdx.createAgentSession({ ...data, id })
-    return { id }
+    return memIdx.createAgentSession({ ...data, id })
   })
 
   // Agent session: end
   ipcMain.handle('memory:endAgentSession', (_event, id: string) => {
     memIdx.endAgentSession(id)
+    return { success: true }
+  })
+
+  ipcMain.handle('memory:endAgentSessionByExternalId', (_event, externalSessionId: string) => {
+    memIdx.endAgentSessionByExternalId(externalSessionId)
     return { success: true }
   })
 

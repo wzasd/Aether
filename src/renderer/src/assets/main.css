@@ -30,25 +30,50 @@
   --color-foreground: hsl(0 0% 98%);
   --color-card: hsl(240 10% 3.9%);
   --color-card-foreground: hsl(0 0% 98%);
-  --color-popover: hsl(240 10% 3.9%);
+  --color-popover: hsl(240 6% 10%);
   --color-popover-foreground: hsl(0 0% 98%);
   --color-primary: hsl(0 0% 98%);
   --color-primary-foreground: hsl(240 5.9% 10%);
-  --color-secondary: hsl(240 3.7% 15.9%);
+  --color-secondary: hsl(240 4% 20%);
   --color-secondary-foreground: hsl(0 0% 98%);
-  --color-muted: hsl(240 3.7% 15.9%);
+  --color-muted: hsl(240 4% 20%);
   --color-muted-foreground: hsl(240 5% 64.9%);
-  --color-accent: hsl(240 3.7% 15.9%);
+  --color-accent: hsl(240 4% 20%);
   --color-accent-foreground: hsl(0 0% 98%);
   --color-destructive: hsl(0 62.8% 30.6%);
   --color-destructive-foreground: hsl(0 0% 98%);
-  --color-border: hsl(240 3.7% 15.9%);
-  --color-input: hsl(240 3.7% 15.9%);
+  --color-border: hsl(240 4% 20%);
+  --color-input: hsl(240 4% 20%);
   --color-ring: hsl(240 4.9% 83.9%);
+}
+
+/* macOS 拖拽区域 — hiddenInset titleBarStyle 需要渲染进程提供拖拽区域 */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * macOS traffic lights 避让区域
+ * trafficLightPosition: { x: 16, y: 16 }
+ * 3 buttons × 12px + 2 gaps × 8px + 16px left offset ≈ 68px
+ * 加 12px 右侧呼吸空间 = 80px
+ */
+:root {
+  --traffic-light-offset: 80px;
 }
 
 * {
   border-color: var(--color-border);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
 }
 
 body {
@@ -69,4 +94,49 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--color-muted-foreground) 50%, transparent);
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: thin;
+}
+.tab-scrollbar::-webkit-scrollbar {
+  height: 3px;
+  width: 3px;
+}
+.tab-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.tab-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-muted-foreground) 20%, transparent);
+  border-radius: 2px;
+}
+.tab-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-muted-foreground) 40%, transparent);
+}
+
+.thin-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: thin;
+}
+.thin-scrollbar::-webkit-scrollbar {
+  width: 3px;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-muted-foreground) 20%, transparent);
+  border-radius: 2px;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-muted-foreground) 40%, transparent);
 }

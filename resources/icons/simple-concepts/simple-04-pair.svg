@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Simple Bytro logo option 4">
+  <defs>
+    <linearGradient id="bg" x1="132" y1="96" x2="900" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#101827"/>
+      <stop offset="1" stop-color="#07080B"/>
+    </linearGradient>
+    <linearGradient id="left" x1="290" y1="284" x2="610" y2="740" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#3B82F6"/>
+    </linearGradient>
+    <linearGradient id="right" x1="734" y1="284" x2="414" y2="740" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34D399"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="34" stdDeviation="42" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="none"/>
+  <g filter="url(#shadow)">
+    <rect x="72" y="72" width="880" height="880" rx="214" fill="url(#bg)"/>
+    <path d="M358 350C474 286 606 286 722 350C626 472 530 594 434 716C344 614 316 474 358 350Z" fill="url(#left)"/>
+    <path d="M666 350C550 286 418 286 302 350C398 472 494 594 590 716C680 614 708 474 666 350Z" fill="url(#right)" opacity="0.92"/>
+    <circle cx="512" cy="510" r="76" fill="#09090B"/>
+    <circle cx="512" cy="510" r="40" fill="#E0F2FE"/>
+  </g>
+</svg>

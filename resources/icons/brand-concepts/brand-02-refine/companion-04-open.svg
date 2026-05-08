@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Bytro companion concept open">
+  <defs>
+    <linearGradient id="bg" x1="150" y1="100" x2="880" y2="930" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#101827"/>
+      <stop offset="1" stop-color="#07080B"/>
+    </linearGradient>
+    <linearGradient id="arc" x1="270" y1="270" x2="770" y2="750" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#67E8F9"/>
+      <stop offset="0.45" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <linearGradient id="path" x1="735" y1="300" x2="270" y2="710" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34D399"/>
+      <stop offset="0.5" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#3B82F6"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="34" stdDeviation="42" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="0" stdDeviation="20" flood-color="#3B82F6" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="none"/>
+  <g filter="url(#shadow)">
+    <rect x="72" y="72" width="880" height="880" rx="214" fill="url(#bg)"/>
+    <rect x="96" y="96" width="832" height="832" rx="190" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/>
+    <g filter="url(#glow)" fill="none" stroke-linecap="round">
+      <path d="M696 332C590 256 426 292 340 426C248 570 318 724 464 760C604 794 744 704 770 558" stroke="#020617" stroke-opacity="0.78" stroke-width="122"/>
+      <path d="M696 332C590 256 426 292 340 426C248 570 318 724 464 760C604 794 744 704 770 558" stroke="url(#arc)" stroke-width="78"/>
+      <path d="M286 624C374 730 542 744 648 632C748 526 746 374 642 308" stroke="#020617" stroke-opacity="0.78" stroke-width="108"/>
+      <path d="M286 624C374 730 542 744 648 632C748 526 746 374 642 308" stroke="url(#path)" stroke-width="64"/>
+    </g>
+    <circle cx="512" cy="512" r="88" fill="#08090D" stroke="#E0F2FE" stroke-opacity="0.92" stroke-width="20"/>
+    <path d="M476 554L512 440L548 554Z" fill="#67E8F9"/>
+    <circle cx="696" cy="332" r="27" fill="#34D399"/>
+    <circle cx="286" cy="624" r="27" fill="#60A5FA"/>
+  </g>
+</svg>

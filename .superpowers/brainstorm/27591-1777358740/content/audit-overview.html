@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bytro-App 需求完整性审计</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; padding: 32px; max-width: 900px; margin: 0 auto; }
+h2 { font-size: 22px; margin-bottom: 4px; }
+.subtitle { color: #94a3b8; font-size: 13px; margin-bottom: 24px; }
+.section { margin-bottom: 24px; }
+.section h3 { font-size: 15px; margin-bottom: 10px; color: #cbd5e1; border-bottom: 1px solid #1e293b; padding-bottom: 6px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; font-size: 13px; }
+.item { padding: 8px 12px; border-radius: 6px; }
+.green { background: #16a34a22; border: 1px solid #16a34a55; }
+.yellow { background: #eab30822; border: 1px solid #eab30855; }
+.red { background: #dc262622; border: 1px solid #dc262655; }
+.stats { display: flex; gap: 24px; font-size: 14px; margin-top: 8px; }
+.stats span { font-weight: bold; }
+.stat-green { color: #16a34a; }
+.stat-yellow { color: #eab308; }
+.stat-red { color: #dc2626; }
+.footnote { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<h2>Bytro-App 需求完整性审计</h2>
+<p class="subtitle">当前实现 vs 文档规划 — 绿色=已实现，黄色=部分实现，红色=未实现</p>
+
+<div class="section">
+<h3>核心聊天循环</h3>
+<div class="grid">
+  <div class="item green">✅ 创建对话</div>
+  <div class="item green">✅ 发送消息</div>
+  <div class="item green">✅ 流式响应显示</div>
+  <div class="item green">✅ Thinking 折叠显示</div>
+  <div class="item green">✅ Tool Call 卡片</div>
+  <div class="item green">✅ 消息持久化到 DB</div>
+  <div class="item green">✅ 中止请求</div>
+  <div class="item green">✅ 侧边栏对话列表</div>
+</div>
+</div>
+
+<div class="section">
+<h3>AI 引擎层</h3>
+<div class="grid">
+  <div class="item green">✅ Claude SDK query() 集成</div>
+  <div class="item green">✅ 16 种 AIEvent 映射</div>
+  <div class="item green">✅ 4 种权限模式定义</div>
+  <div class="item yellow">⚠️ 权限审批无法注入 SDK</div>
+  <div class="item yellow">⚠️ 问题回答无法注入 SDK</div>
+  <div class="item yellow">⚠️ 仅发送最后一条消息</div>
+  <div class="item red">❌ 多模型 Provider</div>
+  <div class="item red">❌ 会话历史传递</div>
+</div>
+</div>
+
+<div class="section">
+<h3>Store 层有状态但无 UI</h3>
+<div class="grid">
+  <div class="item red">❌ 权限模式选择器</div>
+  <div class="item red">❌ 待回答问题 UI</div>
+  <div class="item red">❌ Todo 列表显示</div>
+  <div class="item red">❌ Subagent 状态</div>
+  <div class="item red">❌ Token 用量统计</div>
+  <div class="item red">❌ 模型选择器</div>
+</div>
+</div>
+
+<div class="section">
+<h3>DB 表有 Schema 但无 IPC/UI</h3>
+<div class="grid-3">
+  <div class="item red">❌ oauth_tokens</div>
+  <div class="item red">❌ conversation_usage</div>
+  <div class="item red">❌ conversation_todos</div>
+  <div class="item red">❌ commands</div>
+  <div class="item red">❌ mcp_servers</div>
+  <div class="item red">❌ user_preferences</div>
+</div>
+</div>
+
+<div class="section">
+<h3>文档规划但完全未开始</h3>
+<div class="grid">
+  <div class="item red">❌ Monaco 代码编辑器</div>
+  <div class="item red">❌ xterm.js 终端</div>
+  <div class="item red">❌ 文件浏览器/变更面板</div>
+  <div class="item red">❌ Git 面板/Worktree</div>
+  <div class="item red">❌ MCP 服务器管理</div>
+  <div class="item red">❌ OAuth 认证流程</div>
+  <div class="item red">❌ 设置页面</div>
+  <div class="item red">❌ 对话搜索 UI</div>
+</div>
+</div>
+
+<div class="section">
+<h3>统计</h3>
+<div class="stats">
+  <div><span class="stat-green">16</span> 已实现</div>
+  <div><span class="stat-yellow">3</span> 部分实现</div>
+  <div><span class="stat-red">22</span> 未实现</div>
+</div>
+<p class="footnote">完成度约 39%（16/41），核心聊天循环完整，但 IDE 能力层几乎为零</p>
+</div>
+
+</body>
+</html>

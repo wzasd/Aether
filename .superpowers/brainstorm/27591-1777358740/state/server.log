@@ -1,0 +1,6 @@
+{"type":"server-started","port":58441,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:58441","screen_dir":"/Users/wangzhao/Documents/agentWorkSpace/catwork/bytro-app/.superpowers/brainstorm/27591-1777358740/content","state_dir":"/Users/wangzhao/Documents/agentWorkSpace/catwork/bytro-app/.superpowers/brainstorm/27591-1777358740/state"}
+{"type":"screen-added","file":"/Users/wangzhao/Documents/agentWorkSpace/catwork/bytro-app/.superpowers/brainstorm/27591-1777358740/content/audit-overview.html"}
+{"type":"screen-updated","file":"/Users/wangzhao/Documents/agentWorkSpace/catwork/bytro-app/.superpowers/brainstorm/27591-1777358740/content/audit-overview.html"}
+{"type":"screen-updated","file":"/Users/wangzhao/Documents/agentWorkSpace/catwork/bytro-app/.superpowers/brainstorm/27591-1777358740/content/audit-overview.html"}
+{"type":"screen-updated","file":"/Users/wangzhao/Documents/agentWorkSpace/catwork/bytro-app/.superpowers/brainstorm/27591-1777358740/content/audit-overview.html"}
+{"type":"server-stopped","reason":"idle timeout"}

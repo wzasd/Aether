@@ -1,5 +1,13 @@
 import { getDb } from './db.js'
-import type { Database } from 'better-sqlite3'
+import { buildFtsQuery } from '../utils/fts.js'
+
+const GLOBAL_WORKSPACE_ID = '__global__'
+
+export type MemoryScope = 'project' | 'conversation' | 'all'
+
+function normalizeWorkspaceId(workspaceId?: string | null): string {
+  return workspaceId || GLOBAL_WORKSPACE_ID
+}
 
 // --- Memory Candidates ---
 
@@ -60,9 +68,34 @@ export function createProjectMemoryItem(data: {
   `).run(data)
 }
 
+export function materializeCandidateToProjectMemory(candidateId: string, projectItemId: string): any | undefined {
+  const db = getDb()
+  const candidate = getCandidateById(candidateId)
+  if (!candidate) return undefined
+
+  const existing = db.prepare('SELECT * FROM project_memory_items WHERE id = ?').get(projectItemId)
+  if (!existing) {
+    createProjectMemoryItem({
+      id: projectItemId,
+      workspace_id: candidate.workspace_id,
+      kind: candidate.kind,
+      title: candidate.title,
+      content: candidate.content,
+      status: 'active'
+    })
+  }
+  updateCandidateStatus(candidateId, 'materialized')
+  return candidate
+}
+
 export function getProjectMemoryByWorkspace(workspaceId: string): any[] {
   const db = getDb()
   return db.prepare('SELECT * FROM project_memory_items WHERE workspace_id = ? ORDER BY kind, created_at DESC').all(workspaceId)
+}
+
+export function getProjectMemoryItemById(id: string): any | undefined {
+  const db = getDb()
+  return db.prepare('SELECT * FROM project_memory_items WHERE id = ?').get(id)
 }
 
 export function deleteProjectMemoryItem(id: string): void {
@@ -105,19 +138,33 @@ export function createAgentSession(data: {
   agent_id: string
   provider: string
   external_session_id?: string
-  seq: number
+  seq?: number
   status: string
-}): void {
+}): any {
   const db = getDb()
+  const seq = data.seq ?? (
+    (db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS nextSeq FROM agent_sessions WHERE conversation_id = ? AND agent_id = ?')
+      .get(data.conversation_id, data.agent_id) as { nextSeq: number }).nextSeq
+  )
   db.prepare(`
     INSERT INTO agent_sessions (id, workspace_id, conversation_id, agent_id, provider, external_session_id, seq, status)
     VALUES (@id, @workspace_id, @conversation_id, @agent_id, @provider, @external_session_id, @seq, @status)
-  `).run(data)
+  `).run({ ...data, seq })
+  return db.prepare('SELECT * FROM agent_sessions WHERE id = ?').get(data.id)
 }
 
 export function endAgentSession(id: string): void {
   const db = getDb()
   db.prepare('UPDATE agent_sessions SET status = ?, ended_at = unixepoch() WHERE id = ?').run('ended', id)
+}
+
+export function endAgentSessionByExternalId(externalSessionId: string): void {
+  const db = getDb()
+  db.prepare(`
+    UPDATE agent_sessions
+    SET status = ?, ended_at = unixepoch()
+    WHERE external_session_id = ? AND status = ?
+  `).run('ended', externalSessionId, 'active')
 }
 
 export function getActiveAgentSession(conversationId: string, agentId: string): any | undefined {
@@ -136,61 +183,90 @@ export function upsertAgentProfile(data: {
   source_hash?: string
 }): void {
   const db = getDb()
+  const workspace_id = normalizeWorkspaceId(data.workspace_id)
   db.prepare(`
-    INSERT INTO agent_profiles (id, workspace_id, agent_id, content, source_path, source_hash)
+    INSERT INTO agent_profile_cache (id, workspace_id, agent_id, content, source_path, source_hash)
     VALUES (@id, @workspace_id, @agent_id, @content, @source_path, @source_hash)
     ON CONFLICT(workspace_id, agent_id) DO UPDATE SET
       content = @content,
       source_path = @source_path,
       source_hash = @source_hash,
       updated_at = unixepoch()
-  `).run(data)
+  `).run({ ...data, workspace_id })
 }
 
 export function getAgentProfile(workspaceId: string | null, agentId: string): any | undefined {
   const db = getDb()
-  if (workspaceId) {
-    return db.prepare('SELECT * FROM agent_profiles WHERE workspace_id = ? AND agent_id = ?').get(workspaceId, agentId)
-  }
-  return db.prepare('SELECT * FROM agent_profiles WHERE workspace_id IS NULL AND agent_id = ?').get(agentId)
+  return db.prepare('SELECT * FROM agent_profile_cache WHERE workspace_id = ? AND agent_id = ?')
+    .get(normalizeWorkspaceId(workspaceId), agentId)
 }
 
 // --- Recall (FTS search) ---
 
 export function recallMemory(query: string, options: {
-  scope?: 'project' | 'conversation' | 'all'
+  scope?: MemoryScope
   workspaceId?: string
   conversationId?: string
   limit?: number
 }): any[] {
   const db = getDb()
   const limit = options.limit || 10
+  const scope = options.scope || 'all'
+  const ftsQuery = buildFtsQuery(query)
 
-  if (options.scope === 'conversation' && options.conversationId) {
-    const summaries = db.prepare(`
-      SELECT * FROM conversation_summaries WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?
-    `).all(options.conversationId, limit)
+  if (scope === 'conversation' && options.conversationId) {
+    const summaries = ftsQuery
+      ? db.prepare(`
+          SELECT cs.* FROM conversation_summaries_fts ft
+          JOIN conversation_summaries cs ON ft.rowid = cs.rowid
+          WHERE conversation_summaries_fts MATCH ?
+            AND cs.conversation_id = ?
+          ORDER BY rank
+          LIMIT ?
+        `).all(ftsQuery, options.conversationId, limit)
+      : db.prepare(`
+          SELECT * FROM conversation_summaries WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?
+        `).all(options.conversationId, limit)
     return summaries
   }
 
   // FTS on project memory
-  const ftsQuery = query.replace(/"/g, '""')
-  const results = db.prepare(`
-    SELECT pmi.* FROM memory_fts ft
-    JOIN project_memory_items pmi ON ft.rowid = pmi.rowid
-    WHERE memory_fts MATCH ?
-    ORDER BY rank
-    LIMIT ?
-  `).all(`"${ftsQuery}"`, limit)
+  const projectResults = ftsQuery
+    ? options.workspaceId
+      ? db.prepare(`
+        SELECT pmi.* FROM memory_fts ft
+        JOIN project_memory_items pmi ON ft.rowid = pmi.rowid
+        WHERE memory_fts MATCH ?
+          AND pmi.workspace_id = ?
+        ORDER BY rank
+        LIMIT ?
+        `).all(ftsQuery, options.workspaceId, limit)
+      : db.prepare(`
+        SELECT pmi.* FROM memory_fts ft
+        JOIN project_memory_items pmi ON ft.rowid = pmi.rowid
+        WHERE memory_fts MATCH ?
+        ORDER BY rank
+        LIMIT ?
+        `).all(ftsQuery, limit)
+    : options.workspaceId
+      ? db.prepare('SELECT * FROM project_memory_items WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT ?').all(options.workspaceId, limit)
+      : db.prepare('SELECT * FROM project_memory_items ORDER BY updated_at DESC LIMIT ?').all(limit)
 
-  if (options.scope === 'project' || !options.conversationId) {
-    return results
+  if (scope === 'project' || !options.conversationId) {
+    return projectResults
   }
 
   // Hybrid: combine project memory + conversation summary
-  const summary = getLatestSummary(options.conversationId)
-  if (summary) {
-    return [...results, summary]
-  }
-  return results
+  const summaries = ftsQuery
+    ? db.prepare(`
+        SELECT cs.* FROM conversation_summaries_fts ft
+        JOIN conversation_summaries cs ON ft.rowid = cs.rowid
+        WHERE conversation_summaries_fts MATCH ?
+          AND cs.conversation_id = ?
+        ORDER BY rank
+        LIMIT ?
+      `).all(ftsQuery, options.conversationId, limit)
+    : []
+
+  return [...projectResults, ...summaries].slice(0, limit)
 }
