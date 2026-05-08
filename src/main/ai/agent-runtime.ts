@@ -232,7 +232,7 @@ export class AgentRuntime extends EventEmitter {
     const messageContent = [
       `## 讨论上下文\n\n${contextText}`,
       `\n---\n\n## 当前话题\n\n${obs.message}`,
-      `\n\n你是 @${this.profile.name}（${this.profile.role}），当前在团队自由讨论中。请就话题发表你的专业看法（3-5 句话）。\n\n这不是任务分配——不需要等别人叫你，直接分享你的观点。如果话题和你的领域无关，简单说明即可。`,
+      `\n\n你是 @${this.profile.name}，团队的 ${this.profile.role}。大家在聊上面的话题，你也说说你的想法吧——像平时群里聊天一样，不用太正式。`,
     ].join('\n')
 
     const tempSession = await aiEngine.startSession(fullConfig)
