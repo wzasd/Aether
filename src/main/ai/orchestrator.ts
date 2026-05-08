@@ -3,9 +3,9 @@ import type { WebContents } from 'electron'
 import { getDb } from '../core/db'
 import { createCandidate } from '../core/memory-index'
 import { AgentRuntime } from './agent-runtime'
-import type { AgentProfile, A2ATask, ParsedMention, ExecutionMode, PlannedTask } from './a2a-types'
+import type { AgentProfile, A2ATask, ParsedMention, ExecutionMode, PlannedTask, CollaborationMode, OpenFloorState, OpenFloorResponse } from './a2a-types'
 import type { ReflowGroup } from './reflow-orchestrator'
-import { MAX_DELEGATION_DEPTH, MAX_TASKS_PER_CONVERSATION } from './a2a-types'
+import { MAX_DELEGATION_DEPTH, MAX_TASKS_PER_CONVERSATION, OPEN_FLOOR_TIMEOUT_MS } from './a2a-types'
 import { extractCandidates } from './memory-extractor'
 import { buildInjectionPrompt } from './memory-injection'
 import { getTeam } from './team-config'
@@ -15,11 +15,12 @@ import { InvocationQueue } from './invocation-queue'
 import { ContinuityCapsuleManager, formatContinuationPrompt } from './continuity-capsule'
 import { ReflowOrchestrator } from './reflow-orchestrator'
 import { A2AMemoryDistiller } from './a2a-memory-distiller'
+import { writeObservabilityEvent } from '../core/logging'
 
 // Layer 1
 import { parseIntents } from './intent-parser'
 import type { ParsedIntent } from './intent-parser'
-import { parseMentions } from './mention-parser'
+import { parseMentions, stripMentionSegments } from './mention-parser'
 // Layer 2
 import { checkIntent, checkTeamMembership, checkLoopDetection } from './policy-gate'
 // Layer 3
@@ -43,8 +44,12 @@ function defaultProfile(model: string): AgentProfile {
   }
 }
 
-function runtimeKey(conversationId: string, profileId: string): string {
-  return `${conversationId}:${profileId}`
+function runtimeKey(conversationId: string, profileId: string, taskId?: string): string {
+  // Include taskId in the key so parallel tasks for the same profile don't
+  // overwrite each other's runtimes in the active-runtime map.
+  return taskId
+    ? `${conversationId}:${profileId}:${taskId}`
+    : `${conversationId}:${profileId}`
 }
 
 const FILE_OPERATION_TOOLS = new Set(['Write', 'Edit', 'Delete', 'NotebookEdit'])
@@ -74,6 +79,13 @@ class AgentOrchestrator {
   private reflowOrchestrator = new ReflowOrchestrator()
   private memoryDistiller = new A2AMemoryDistiller()
 
+  // Open Floor state tracking — keyed by conversationId
+  private openFloorStates: Map<string, OpenFloorState> = new Map()
+  // Conversation-level collaboration mode — keyed by conversationId
+  private conversationModes: Map<string, CollaborationMode> = new Map()
+  // AbortControllers for open floor discussions — keyed by conversationId
+  private openFloorControllers: Map<string, AbortController> = new Map()
+
   constructor() {
     // Start reflow timeout guard
     this.reflowOrchestrator.setTimeoutCallback((group) => {
@@ -102,11 +114,12 @@ class AgentOrchestrator {
         const task = this.rowToTask(row)
 
         // Abort the runtime so the hung executeTask() promise resolves
-        const key = runtimeKey(task.conversationId, task.toProfileId)
+        const key = runtimeKey(task.conversationId, task.toProfileId, task.id)
         const runtime = this.runtimes.get(key)
         if (runtime?.isActive) {
           this.zombieTaskIds.add(taskId)
           runtime.abort()
+          writeObservabilityEvent('runtime:terminated', { taskId, conversationId: task.conversationId, profileId: task.toProfileId, runtimeKey: key, reason: 'zombie' })
           this.runtimes.delete(key)
         }
         this.invocationQueue.markDone(task.conversationId)
@@ -132,10 +145,23 @@ class AgentOrchestrator {
     executionMode: ExecutionMode,
     webContents: WebContents,
     overrides?: { providerType?: string; model?: string },
-    initialMentions?: string
+    initialMentions?: string,
+    collaborationMode?: CollaborationMode
   ): Promise<void> {
     this.webContentsMap.set(conversationId, webContents)
     this.invocationQueue.clear(conversationId)
+
+    // Store collaboration mode for this conversation
+    const mode: CollaborationMode = collaborationMode ?? 'orchestrated'
+    this.conversationModes.set(conversationId, mode)
+
+    // Open Floor branch: broadcast to all team agents, skip normal pipeline
+    if (mode === 'open_floor') {
+      await this.executeOpenFloor(conversationId, content, webContents)
+      return
+    }
+
+    // ─── Orchestrated branch (existing logic) ───
 
     const profile = profileId
       ? (this.loadProfile(profileId) ?? defaultProfile(sessionConfig.model))
@@ -173,10 +199,7 @@ class AgentOrchestrator {
     // Strip @mention patterns from the primary agent's message
     let primaryContent = content
     if (combinedMentionText) {
-      primaryContent = content.replace(
-        /(?:^|(?<=\s))@([\w-]+):\s*([\s\S]*?)(?=(?:\s)@[\w-]+:|$)/g,
-        ''
-      ).trim()
+      primaryContent = stripMentionSegments(content)
     }
     const isAllMentions = combinedMentionText && !primaryContent
 
@@ -185,7 +208,9 @@ class AgentOrchestrator {
     const effectiveExecutionMode = combinedMentions.length > 1 ? 'parallel' : executionMode
 
     // Direct routing: when the entire message is @mentions, skip primary
-    // agent and route straight to the target agent(s).
+    // agent execution and route straight to the target agent(s).
+    // Delegated agent output is emitted as a completion event and persisted by
+    // the renderer as the target agent's visible reply (Path A).
     if (isAllMentions) {
       const memInjection = buildInjectionPrompt(combinedMentionText, workspaceId)
       const mentionWithMemory = memInjection.count > 0
@@ -237,7 +262,7 @@ class AgentOrchestrator {
     this.persistEdge({ id: randomUUID(), conversationId, fromNodeId: null, toNodeId: task.id, edgeType: 'user-mention', label: 'User → Task' })
     this.send(webContents, 'a2a:taskCreated', task)
 
-    // Route @mentions — both from UI initialMentions and inline in chat input
+    // Route @mentions — both from UI initialMentions and inline in chat input.
     if (combinedMentionText) {
       await this.dispatchIntents(
         conversationId, combinedMentionText, profile,
@@ -261,25 +286,71 @@ class AgentOrchestrator {
     const prefix = `${conversationId}:`
     this.runtimes.forEach((runtime, key) => {
       if (key.startsWith(prefix)) {
-        if (runtime.isActive) runtime.abort()
+        if (runtime.isActive) {
+          runtime.abort()
+          writeObservabilityEvent('runtime:terminated', { conversationId, profileId: key.split(':')[1], runtimeKey: key, reason: 'aborted' })
+        }
         this.runtimes.delete(key)
       }
     })
   }
 
-  respondPermission(conversationId: string, approved: boolean): void {
-    if (!approved) { this.abort(conversationId); return }
-    const prefix = `${conversationId}:`
-    this.runtimes.forEach((runtime, key) => {
-      if (key.startsWith(prefix) && runtime.isActive) runtime.respondPermission(approved)
-    })
+  respondPermission(conversationId: string, approved: boolean, profileId: string, taskId?: string): void {
+    if (!approved) {
+      writeObservabilityEvent('permission:denied', { conversationId, profileId, taskId })
+      this.abort(conversationId); return
+    }
+    writeObservabilityEvent('permission:granted', { conversationId, profileId, taskId })
+    // Route by exact runtime key when taskId is known; fall back to prefix
+    // scan for backwards compatibility with callers that don't supply taskId.
+    if (taskId) {
+      const exactKey = runtimeKey(conversationId, profileId, taskId)
+      const runtime = this.runtimes.get(exactKey)
+      if (runtime?.isActive) {
+        runtime.respondPermission(approved)
+        return
+      }
+    } else {
+      const prefix = `${conversationId}:${profileId}:`
+      const activeRuntime = Array.from(this.runtimes.entries()).find(
+        ([key, rt]) => key.startsWith(prefix) && rt.isActive
+      )
+      if (activeRuntime) {
+        activeRuntime[1].respondPermission(approved)
+        return
+      }
+    }
+    // Fail closed: if no exact runtime matches, the permission request is stale.
+    writeObservabilityEvent('permission:abandoned', { conversationId, profileId, taskId, reason: 'stale' })
+    const wc = this.webContentsMap.get(conversationId)
+    if (wc && !wc.isDestroyed()) {
+      this.appendSystemMessage(wc, conversationId, `权限响应超时：目标 Agent 会话已结束`)
+    }
   }
 
-  respondQuestion(conversationId: string, answer: string): void {
-    const prefix = `${conversationId}:`
-    this.runtimes.forEach((runtime, key) => {
-      if (key.startsWith(prefix) && runtime.isActive) runtime.respondQuestion(answer)
-    })
+  respondQuestion(conversationId: string, answer: string, profileId: string, taskId?: string): void {
+    if (taskId) {
+      const exactKey = runtimeKey(conversationId, profileId, taskId)
+      const runtime = this.runtimes.get(exactKey)
+      if (runtime?.isActive) {
+        runtime.respondQuestion(answer)
+        return
+      }
+    } else {
+      const prefix = `${conversationId}:${profileId}:`
+      const activeRuntime = Array.from(this.runtimes.entries()).find(
+        ([key, rt]) => key.startsWith(prefix) && rt.isActive
+      )
+      if (activeRuntime) {
+        activeRuntime[1].respondQuestion(answer)
+        return
+      }
+    }
+    writeObservabilityEvent('permission:abandoned', { conversationId, profileId, taskId, reason: 'stale_question' })
+    const wc = this.webContentsMap.get(conversationId)
+    if (wc && !wc.isDestroyed()) {
+      this.appendSystemMessage(wc, conversationId, `问题回答超时：目标 Agent 会话已结束`)
+    }
   }
 
   private hasActiveRuntime(conversationId: string): boolean {
@@ -355,7 +426,7 @@ class AgentOrchestrator {
       knownAgentNames: [...teamMembers.map((m) => m.name), ...(teamId ? ['All'] : [])],
       knownCapabilities,
     })
-
+    writeObservabilityEvent('intent:dispatched', { conversationId, profileId: fromProfile.id, intentCount: parsedIntents.filter(i => i.intent.type !== 'user_message').length, source: isUserInitiated ? 'user' : 'agent-scan' })
     for (const { intent } of parsedIntents) {
       if (intent.type === 'user_message') continue
 
@@ -433,6 +504,221 @@ class AgentOrchestrator {
     }
   }
 
+  // ─── Open Floor ────────────────────────────────────────────────────────────
+
+  /**
+   * Execute an open_floor discussion. Broadcasts the user message to all
+   * enabled agents in the team (or all enabled profiles if no team is set).
+   * Each agent independently assesses relevance and may reply. No task chain
+   * is created, no A2A tracking, no DB persistence for discussion messages.
+   */
+  private async executeOpenFloor(
+    conversationId: string,
+    message: string,
+    webContents: WebContents
+  ): Promise<void> {
+    // Create Open Floor state
+    const state: OpenFloorState = {
+      conversationId,
+      status: 'active',
+      startTime: Date.now(),
+      responses: [],
+      pendingAgents: [],
+      skippedAgents: [],
+    }
+    this.openFloorStates.set(conversationId, state)
+
+    // Create AbortController so stopOpenFloor can interrupt
+    const abortController = new AbortController()
+    this.openFloorControllers.set(conversationId, abortController)
+
+    // Load team members (or all enabled profiles if no team)
+    const teamId = this.getConversationTeamId(conversationId)
+    const profiles = teamId
+      ? this.loadTeamMemberProfiles(teamId)
+      : this.loadAllEnabledProfiles()
+
+    if (profiles.length === 0) {
+      this.appendSystemMessage(webContents, conversationId, '没有可用的 Agent 参与讨论')
+      state.status = 'closed'
+      state.endTime = Date.now()
+      this.openFloorControllers.delete(conversationId)
+      return
+    }
+
+    state.pendingAgents = profiles.map((p) => p.id)
+
+    // Build full conversation context
+    const context = await this.buildConversationContext(conversationId)
+
+    // Broadcast to all agents in parallel
+    const baseConfig = this.baseConfigs.get(conversationId)
+    const promises = profiles.map(async (profile) => {
+      // Check early exit before starting any work
+      if (state.status !== 'active' || abortController.signal.aborted) return
+
+      try {
+        // Start a runtime for this agent if needed for observation
+        const runtime = new AgentRuntime(profile)
+        runtime.setKnownAgents(profiles)
+
+        // Register runtime so it can be aborted/cleaned up
+        const key = runtimeKey(conversationId, profile.id, 'open-floor')
+        this.runtimes.set(key, runtime)
+
+        try {
+          // Start the runtime with base config (or defaults) so it can generate
+          if (baseConfig) {
+            await runtime.start(baseConfig).catch(() => {
+              // If start fails, agent can't participate — silently skip
+              state.skippedAgents.push(profile.id)
+              return
+            })
+          } else {
+            state.skippedAgents.push(profile.id)
+            return
+          }
+
+          // Check abort before expensive observation call
+          if (state.status !== 'active' || abortController.signal.aborted) return
+
+          // Push observation to the agent
+          const result = await runtime.onObservation({
+            conversationId,
+            message,
+            context,
+            collaborationMode: 'open_floor',
+          })
+
+          if (result.reply) {
+            state.responses.push({
+              agentId: profile.id,
+              agentName: profile.name,
+              content: result.reply,
+              timestamp: Date.now(),
+              relevanceScore: result.relevanceScore,
+            })
+            state.pendingAgents = state.pendingAgents.filter((id) => id !== profile.id)
+          } else {
+            state.skippedAgents.push(profile.id)
+            state.pendingAgents = state.pendingAgents.filter((id) => id !== profile.id)
+          }
+        } finally {
+          // Clean up the runtime and remove from registry
+          await runtime.dispose().catch(() => {})
+          this.runtimes.delete(key)
+        }
+      } catch {
+        state.skippedAgents.push(profile.id)
+        state.pendingAgents = state.pendingAgents.filter((id) => id !== profile.id)
+      }
+    })
+
+    // Wait for responses (with timeout OR abort signal)
+    await Promise.race([
+      Promise.all(promises),
+      new Promise<void>((resolve) => {
+        const timeoutId = setTimeout(resolve, OPEN_FLOOR_TIMEOUT_MS)
+        abortController.signal.addEventListener('abort', () => {
+          clearTimeout(timeoutId)
+          resolve()
+        })
+      }),
+    ])
+
+    // Mark closed
+    state.status = 'closed'
+    state.endTime = Date.now()
+    this.openFloorControllers.delete(conversationId)
+
+    // Send all responses as individual agent messages
+    for (const response of state.responses) {
+      this.appendSystemMessage(
+        webContents,
+        conversationId,
+        `🧠 @${response.agentName} 参与了讨论`
+      )
+      // Emit as a regular message event so the UI renders it
+      if (!webContents.isDestroyed()) {
+        webContents.send('ai:event', {
+          type: 'agent_observation',
+          conversationId,
+          agentProfileId: response.agentId,
+          agentName: response.agentName,
+          content: response.content,
+          timestamp: response.timestamp,
+          relevanceScore: response.relevanceScore,
+        })
+      }
+    }
+
+    // Summary message
+    const total = state.responses.length
+    const skipped = state.skippedAgents.length
+    if (!webContents.isDestroyed()) {
+      const summary = `🧠 自由讨论结束：${total} 个 Agent 回复，${skipped} 个静默`
+      this.appendSystemMessage(webContents, conversationId, summary)
+      webContents.send('ai:event', {
+        type: 'open_floor_closed',
+        conversationId,
+        totalResponses: total,
+        skippedAgents: skipped,
+      })
+    }
+
+    writeObservabilityEvent('open_floor:completed', {
+      conversationId,
+      totalResponses: total,
+      skippedAgents: skipped,
+    })
+  }
+
+  /** Stop an active open floor discussion early */
+  stopOpenFloor(conversationId: string): void {
+    const state = this.openFloorStates.get(conversationId)
+    if (state && state.status === 'active') {
+      state.status = 'closing'
+
+      // Abort the AbortController so Promise.race resolves early and
+      // each agent's promise loop exits at the next check point
+      const controller = this.openFloorControllers.get(conversationId)
+      if (controller) {
+        controller.abort()
+        this.openFloorControllers.delete(conversationId)
+      }
+
+      // Abort all registered Open Floor runtimes to interrupt in-flight LLM calls
+      const prefix = `${conversationId}:`
+      this.runtimes.forEach((runtime, key) => {
+        if (key.startsWith(prefix) && runtime.isActive) {
+          runtime.abort()
+          writeObservabilityEvent('runtime:terminated', {
+            conversationId,
+            profileId: key.split(':')[1],
+            runtimeKey: key,
+            reason: 'open_floor_stopped',
+          })
+        }
+      })
+
+      writeObservabilityEvent('open_floor:stopped', { conversationId })
+    }
+  }
+
+  /** Build conversation context for open floor observation */
+  private async buildConversationContext(
+    conversationId: string
+  ): Promise<Array<{ role: string; content: string }>> {
+    const db = getDb()
+    const rows = db.prepare(
+      `SELECT role, content FROM messages
+       WHERE conversation_id = ? AND content IS NOT NULL
+       ORDER BY created_at ASC
+       LIMIT 20`
+    ).all(conversationId) as Array<{ role: string; content: string }>
+    return rows
+  }
+
   // ─── Layer 5: Task scheduling ─────────────────────────────────────────────
 
   private async scheduleTask(
@@ -497,18 +783,23 @@ class AgentOrchestrator {
     })
     this.send(webContents, 'a2a:taskCreated', task)
 
-    // Register completion hook for agent-initiated tasks so parent agent
-    // automatically receives a feedback follow-up when child completes.
-    if (source === 'agent-scan' && parentTask) {
+    // Register completion hook so the parent agent automatically receives a
+    // feedback follow-up when the child task completes. This applies both to
+    // agent-initiated @mentions and user-initiated @mentions — without it,
+    // delegated agents finish silently and never report back.
+    if (parentTask) {
       this.registerCompletionHook(task.id, (completedTask, output) => {
         this.handleChildComplete(parentTask, completedTask, output)
       })
     }
 
     if (executionMode === 'parallel') {
+      this.invocationQueue.trackParallel(conversationId, task.id)
+      writeObservabilityEvent('task:enqueued', { taskId: task.id, conversationId, profileId: task.toProfileId, runtimeKey: runtimeKey(conversationId, task.toProfileId, task.id) })
       this.executeTask(task, toProfile, baseConfig, executionMode, webContents).catch(() => {})
     } else {
       const position = this.invocationQueue.enqueue(conversationId, task)
+      writeObservabilityEvent('task:enqueued', { taskId: task.id, conversationId, profileId: task.toProfileId, runtimeKey: runtimeKey(conversationId, task.toProfileId, task.id) })
       if (webContents && !webContents.isDestroyed()) {
         this.send(webContents, 'a2a:taskQueued', { taskId: task.id, conversationId, position })
       }
@@ -527,8 +818,9 @@ class AgentOrchestrator {
     webContents: WebContents
   ): Promise<void> {
     const conversationId = task.conversationId
-    const key = runtimeKey(conversationId, profile.id)
+    const key = runtimeKey(conversationId, profile.id, task.id)
     this.updateTaskStatus(task.id, 'working')
+    writeObservabilityEvent('task:started', { taskId: task.id, conversationId, profileId: profile.id })
 
     // Create or load continuity capsule for this task
     let capsule = this.capsuleManager.getByTaskId(task.id)
@@ -615,7 +907,7 @@ class AgentOrchestrator {
       const runtimeConfig = task.readOnly ? { ...baseConfig, permissionMode: 'manual' as const } : baseConfig
 
       await runtime.start(runtimeConfig, runtimeOverrides)
-      // Capture the session ID immediately after start so we can persist it on success
+      writeObservabilityEvent('runtime:started', { taskId: task.id, conversationId, profileId: profile.id, runtimeKey: key })
       const sessionIdAtStart = runtime.sessionId
 
       // ACP protocol leverage: ensure the correct model is loaded.
@@ -654,6 +946,7 @@ class AgentOrchestrator {
 
       await runtime.dispose()
       this.runtimes.delete(key)
+      writeObservabilityEvent('runtime:terminated', { taskId: task.id, conversationId, profileId: profile.id, runtimeKey: key, reason: 'completed' })
 
       if (this.zombieTaskIds.delete(task.id)) {
         return
@@ -663,7 +956,9 @@ class AgentOrchestrator {
         throw new Error(terminalError)
       }
 
+      this.invocationQueue.untrackParallel(task.id)
       this.updateTaskStatus(task.id, 'completed')
+      writeObservabilityEvent('task:completed', { taskId: task.id, conversationId, profileId: profile.id, runtimeKey: key })
       if (capsule) this.capsuleManager.complete(capsule.id, 'completed')
       this.invokeCompletionHook(task, accumulatedOutput)
       this.send(webContents, 'a2a:taskCompleted', { taskId: task.id, conversationId })
@@ -681,10 +976,18 @@ class AgentOrchestrator {
     } catch (error) {
       await runtime.dispose().catch(() => {})
       this.runtimes.delete(key)
+      writeObservabilityEvent('runtime:terminated', { taskId: task.id, conversationId: task.conversationId, profileId: profile.id, runtimeKey: key, reason: 'crashed' })
+      this.invocationQueue.untrackParallel(task.id)
       this.updateTaskStatus(task.id, 'failed')
+      writeObservabilityEvent('task:failed', { taskId: task.id, conversationId: task.conversationId, profileId: profile.id, runtimeKey: key, error: String(error) })
       if (capsule) this.capsuleManager.complete(capsule.id, 'needs_owner', String(error))
       this.invokeCompletionHook(task, accumulatedOutput || String(error))
       this.send(webContents, 'a2a:taskCompleted', { taskId: task.id, conversationId, error: String(error) })
+
+      // Clear stored session ID so a failed session is never blindly resumed.
+      if (task.depth === 0) {
+        this.primarySessionIds.delete(`${conversationId}:${profile.id}`)
+      }
     }
   }
 
@@ -1063,7 +1366,16 @@ class AgentOrchestrator {
       fromProfileId: childTask.toProfileId,
       toProfileId: feedbackToProfileId,
       message: feedbackMessage,
-      contextSnapshot: '',
+      contextSnapshot: assembleContext({
+        conversationId,
+        strategy: 'handoff',
+        fromAgentName: this.profileName(childTask.toProfileId),
+        fromAgentProfileId: childTask.toProfileId,
+        fromAgentOutput: childOutput,
+        toAgentName: this.profileName(feedbackToProfileId),
+        toAgentRole: this.loadProfile(feedbackToProfileId)?.role ?? 'assistant',
+        instruction: feedbackMessage,
+      }),
       status: 'pending',
       depth: feedbackDepth,
       chain: [...childTask.chain, feedbackToProfileId],
@@ -1073,6 +1385,7 @@ class AgentOrchestrator {
     }
 
     this.persistTask(feedbackTask)
+    writeObservabilityEvent('feedback:created', { taskId: feedbackTask.id, conversationId: feedbackTask.conversationId, profileId: feedbackToProfileId, runtimeKey: runtimeKey(feedbackTask.conversationId, feedbackToProfileId, feedbackTask.id) })
     this.persistEdge({
       id: randomUUID(),
       conversationId: feedbackTask.conversationId,
