@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from 'crypto'
+import type Database from 'better-sqlite3'
 import { getDb } from '../core/db'
 
 export type TaskStatus = 'pending' | 'claimed' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -43,14 +44,25 @@ export interface ClaimResult {
 }
 
 export class TaskQueue {
-  private db = getDb()
+  private db: Database.Database | null = null
 
   constructor() {
-    this.ensureTable()
+    // DB is lazily initialized to avoid module-level getDb() call
+    // before initDatabase() runs during Electron app ready
+  }
+
+  /** Get the database instance (lazy initialization) */
+  private getDb(): Database.Database {
+    if (!this.db) {
+      this.db = getDb()
+      this.ensureTable()
+    }
+    return this.db
   }
 
   private ensureTable(): void {
-    this.db.prepare(`
+    const db = this.getDb()
+    db.prepare(`
       CREATE TABLE IF NOT EXISTS agent_task_queue (
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
@@ -69,12 +81,12 @@ export class TaskQueue {
       )
     `).run()
 
-    this.db.prepare(`
+    this.getDb().prepare(`
       CREATE INDEX IF NOT EXISTS idx_task_queue_status_agent
       ON agent_task_queue(status, agent_profile_id)
     `).run()
 
-    this.db.prepare(`
+    this.getDb().prepare(`
       CREATE INDEX IF NOT EXISTS idx_task_queue_conversation
       ON agent_task_queue(conversation_id, created_at)
     `).run()
@@ -99,7 +111,7 @@ export class TaskQueue {
       sessionId: params.sessionId ?? null,
     }
 
-    this.db.prepare(`
+    this.getDb().prepare(`
       INSERT INTO agent_task_queue
       (id, conversation_id, agent_profile_id, message, context, status, created_at, depth, parent_task_id, session_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -126,7 +138,7 @@ export class TaskQueue {
   claim(agentProfileId: string, maxConcurrent: number): ClaimResult {
     try {
       // Check capacity
-      const running = this.db.prepare(
+      const running = this.getDb().prepare(
         `SELECT COUNT(*) as count FROM agent_task_queue
          WHERE agent_profile_id = ? AND status IN ('claimed', 'running')`
       ).get(agentProfileId) as { count: number }
@@ -136,7 +148,7 @@ export class TaskQueue {
       }
 
       // Atomically claim the oldest pending task
-      const row = this.db.prepare(
+      const row = this.getDb().prepare(
         `UPDATE agent_task_queue
          SET status = 'claimed', claimed_at = ?
          WHERE id = (
@@ -161,14 +173,14 @@ export class TaskQueue {
 
   /** Mark a task as running */
   start(taskId: string): void {
-    this.db.prepare(
+    this.getDb().prepare(
       `UPDATE agent_task_queue SET status = 'running' WHERE id = ?`
     ).run(taskId)
   }
 
   /** Mark a task as completed with result */
   complete(taskId: string, result: string): void {
-    this.db.prepare(
+    this.getDb().prepare(
       `UPDATE agent_task_queue
        SET status = 'completed', completed_at = ?, result = ?
        WHERE id = ?`
@@ -177,7 +189,7 @@ export class TaskQueue {
 
   /** Mark a task as failed with error */
   fail(taskId: string, error: string): void {
-    this.db.prepare(
+    this.getDb().prepare(
       `UPDATE agent_task_queue
        SET status = 'failed', completed_at = ?, error = ?
        WHERE id = ?`
@@ -186,7 +198,7 @@ export class TaskQueue {
 
   /** Cancel all pending tasks for a conversation */
   cancelPending(conversationId: string): number {
-    const result = this.db.prepare(
+    const result = this.getDb().prepare(
       `UPDATE agent_task_queue
        SET status = 'cancelled'
        WHERE conversation_id = ? AND status = 'pending'`
@@ -196,7 +208,7 @@ export class TaskQueue {
 
   /** Get all tasks for a conversation */
   getConversationTasks(conversationId: string): AgentTask[] {
-    const rows = this.db.prepare(
+    const rows = this.getDb().prepare(
       `SELECT * FROM agent_task_queue WHERE conversation_id = ? ORDER BY created_at ASC`
     ).all(conversationId) as Array<Record<string, unknown>>
     return rows.map((r) => this.rowToTask(r))
@@ -224,7 +236,7 @@ export class TaskQueue {
 
   /** Get active (claimed/running) tasks for an agent */
   getAgentActiveTasks(agentProfileId: string): AgentTask[] {
-    const rows = this.db.prepare(
+    const rows = this.getDb().prepare(
       `SELECT * FROM agent_task_queue
        WHERE agent_profile_id = ? AND status IN ('claimed', 'running')
        ORDER BY created_at ASC`
@@ -234,7 +246,7 @@ export class TaskQueue {
 
   /** Count pending tasks for an agent */
   countPending(agentProfileId: string): number {
-    const row = this.db.prepare(
+    const row = this.getDb().prepare(
       `SELECT COUNT(*) as count FROM agent_task_queue
        WHERE agent_profile_id = ? AND status = 'pending'`
     ).get(agentProfileId) as { count: number }
@@ -243,7 +255,7 @@ export class TaskQueue {
 
   /** Get the most recent session ID for an agent in a conversation */
   getLastSessionId(conversationId: string, agentProfileId: string): string | null {
-    const row = this.db.prepare(
+    const row = this.getDb().prepare(
       `SELECT session_id FROM agent_task_queue
        WHERE conversation_id = ? AND agent_profile_id = ? AND session_id IS NOT NULL
        ORDER BY completed_at DESC
@@ -254,7 +266,7 @@ export class TaskQueue {
 
   /** Update session ID for a task */
   updateSessionId(taskId: string, sessionId: string): void {
-    this.db.prepare(
+    this.getDb().prepare(
       `UPDATE agent_task_queue SET session_id = ? WHERE id = ?`
     ).run(sessionId, taskId)
   }
