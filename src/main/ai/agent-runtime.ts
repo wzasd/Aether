@@ -2,7 +2,7 @@ import { EventEmitter } from 'events'
 import { aiEngine } from './engine'
 import { scanAgentOutput } from './agent-output-scanner'
 import { resolveRuntime } from './runtime-resolver'
-import type { AgentProfile, Observation } from './a2a-types'
+import type { AgentProfile, Observation, ObservationTool } from './a2a-types'
 import type { SessionConfig, Session } from './provider'
 import type { AIEvent } from './types'
 import type { ParsedMention } from './a2a-types'
@@ -185,9 +185,97 @@ export class AgentRuntime extends EventEmitter {
     }
   }
 
+  // ─── Tool Calling ─────────────────────────────────────────────────────────
+
+  /** Build tool definitions section for the system prompt. */
+  private buildToolPrompt(tools?: ObservationTool[]): string {
+    if (!tools || tools.length === 0) return ''
+
+    const toolDescs = tools.map(t => {
+      const params = Object.entries(t.parameters)
+        .map(([name, def]) => `  - ${name} (${def.type}): ${def.description}`)
+        .join('\n')
+      return `### ${t.name}\n${t.description}\n参数:\n${params}`
+    }).join('\n\n')
+
+    return `## 可用工具
+
+你可以调用以下工具获取更多信息。将工具调用放在回复末尾，使用以下格式：
+
+<tool_call>
+<name>工具名称</name>
+<parameters>
+{"参数名": "参数值"}
+</parameters>
+</tool_call>
+
+系统会执行工具并将结果返回给你，然后你可以继续生成回复。每个回复最多包含一个工具调用。
+
+${toolDescs}`
+  }
+
+  /** Parse a tool call from LLM response text. Only matches at end of response to avoid
+   *  false positives from code blocks or explanations. Returns null if no tool call found. */
+  private parseToolCall(text: string): { name: string; args: Record<string, unknown> } | null {
+    // Anchor to end of text — tool calls should only appear as the final action
+    const match = text.match(/<tool_call>([\s\S]*?)<\/tool_call>\s*$/)
+    if (!match) return null
+
+    const block = match[1]
+    const nameMatch = block.match(/<name>(.*?)<\/name>/)
+    if (!nameMatch) return null
+
+    const name = nameMatch[1].trim()
+    let args: Record<string, unknown> = {}
+
+    const paramsMatch = block.match(/<parameters>([\s\S]*?)<\/parameters>/)
+    if (paramsMatch) {
+      try {
+        args = JSON.parse(paramsMatch[1].trim())
+      } catch {
+        // Non-JSON parameters — keep empty args
+      }
+    }
+
+    return { name, args }
+  }
+
+  /** Execute a tool call and return the result as a string. */
+  private async executeTool(
+    toolCall: { name: string; args: Record<string, unknown> },
+    obs: Observation
+  ): Promise<string> {
+    const tool = obs.tools?.find(t => t.name === toolCall.name)
+    if (!tool) return `错误: 未知工具 "${toolCall.name}"`
+
+    try {
+      return await tool.execute(toolCall.args)
+    } catch (err) {
+      return `工具执行错误: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+
+  /** Wait for the next complete/done/error event on a session. */
+  private waitForReply(sessionId: string): Promise<string> {
+    return new Promise<string>((resolve) => {
+      const handler = (event: AIEvent): void => {
+        if (event.type === 'complete' && event.fullText) {
+          aiEngine.offEvent(sessionId, handler)
+          resolve(event.fullText as string)
+        }
+        if (event.type === 'done' || event.type === 'error') {
+          aiEngine.offEvent(sessionId, handler)
+          resolve('')
+        }
+      }
+      aiEngine.onEvent(sessionId, handler)
+    })
+  }
+
   private async generateObservationReply(obs: Observation): Promise<string> {
+    const MAX_TOOL_CALLS = 5
+
     // Start a temporary session for the observation response.
-    // Uses cached workingDir/providerType from the last start() call.
     const resolved = resolveRuntime(
       this.profile.id === 'default' ? null : this.profile,
       {
@@ -197,13 +285,20 @@ export class AgentRuntime extends EventEmitter {
       undefined
     )
 
-    // Assemble the Open Floor instruction with context
+    // Assemble system prompt
     const systemPromptParts: string[] = []
 
     if (this.profile.systemPrompt) {
       systemPromptParts.push(this.profile.systemPrompt)
     }
     systemPromptParts.push(OPEN_FLOOR_INSTRUCTION)
+
+    // Inject tool definitions if available
+    const hasTools = obs.tools && obs.tools.length > 0
+    const toolPrompt = this.buildToolPrompt(obs.tools)
+    if (toolPrompt) {
+      systemPromptParts.push(toolPrompt)
+    }
 
     const otherAgents = this.knownAgents.filter((a) => a.id !== this.profile.id)
     if (otherAgents.length > 0) {
@@ -225,35 +320,67 @@ export class AgentRuntime extends EventEmitter {
       appendSystemPrompt: systemPromptParts.join('\n\n'),
     }
 
-    // Build the full message content
-    const contextText = obs.context
-      .map((m) => `[${m.role}]: ${m.content}`)
-      .join('\n')
-    const messageContent = [
-      `## 讨论上下文\n\n${contextText}`,
-      `\n---\n\n## 当前话题\n\n${obs.message}`,
-      `\n\n你是 @${this.profile.name}，团队的 ${this.profile.role}。大家在聊上面的话题，你也说说你的想法吧——像平时群里聊天一样，不用太正式。`,
-    ].join('\n')
+    // Build message content — with tools, skip context pre-injection
+    const messageParts: string[] = []
+    if (!hasTools) {
+      // Fallback: pre-inject context when no tools available
+      const contextText = obs.context
+        .map((m) => `[${m.role}]: ${m.content}`)
+        .join('\n')
+      if (contextText) {
+        messageParts.push(`## 讨论上下文\n\n${contextText}`)
+      }
+    }
+    messageParts.push(
+      `## 当前话题\n\n${obs.message}`,
+      hasTools
+        ? `\n你是 @${this.profile.name}，团队的 ${this.profile.role}。大家在聊上面的话题。如果不确定完整上下文，可以先调用 readMessages 工具查看历史，然后再发表你的看法。像平时群里聊天一样，不用太正式。`
+        : `\n你是 @${this.profile.name}，团队的 ${this.profile.role}。大家在聊上面的话题，你也说说你的想法吧——像平时群里聊天一样，不用太正式。`
+    )
+    const messageContent = messageParts.join('\n---\n\n')
 
     const tempSession = await aiEngine.startSession(fullConfig)
     this.observationSessionId = tempSession.id
     try {
-      let reply = ''
-      await new Promise<void>((resolve) => {
-        const handler = (event: AIEvent): void => {
-          if (event.type === 'complete' && event.fullText) {
-            reply = event.fullText as string
-          }
-          if (event.type === 'done' || event.type === 'error') {
-            aiEngine.offEvent(tempSession.id, handler)
-            resolve()
-          }
-        }
-        aiEngine.onEvent(tempSession.id, handler)
-        aiEngine.sendMessage(tempSession.id, messageContent)
-      })
+      let toolCallCount = 0
+      let lastReply = ''
 
-      return reply || ''
+      // Send initial message
+      aiEngine.sendMessage(tempSession.id, messageContent)
+
+      // toolCallCount tracks how many tool calls have been EXECUTED.
+      // Entry: 0→1→2→3→4 each execute; entry=5 hits >=MAX_TOOL_CALLS and blocks the 6th.
+      // So MAX_TOOL_CALLS=5 allows exactly 5 tool calls.
+      while (toolCallCount <= MAX_TOOL_CALLS) {
+        const reply = await this.waitForReply(tempSession.id)
+        if (!reply) break
+
+        lastReply = reply
+
+        // Try to parse a tool call
+        const toolCall = this.parseToolCall(reply)
+        if (!toolCall || toolCallCount >= MAX_TOOL_CALLS) {
+          return lastReply
+        }
+
+        toolCallCount++
+
+        // Execute tool and send result back
+        console.debug(`[AgentRuntime] ${this.profile.name} tool_call #${toolCallCount}: ${toolCall.name}(${JSON.stringify(toolCall.args)})`)
+        const toolResult = await this.executeTool(toolCall, obs)
+        console.debug(`[AgentRuntime] ${this.profile.name} tool_result #${toolCallCount}: ${toolCall.name} → ${toolResult.length} chars`)
+        const resultMessage = [
+          `工具执行结果:`,
+          `<tool_result name="${toolCall.name}">`,
+          toolResult,
+          `</tool_result>`,
+          '',
+          '请基于以上结果继续回复。',
+        ].join('\n')
+        aiEngine.sendMessage(tempSession.id, resultMessage)
+      }
+
+      return lastReply || ''
     } finally {
       this.observationSessionId = null
       await aiEngine.endSession(tempSession.id).catch(() => {})

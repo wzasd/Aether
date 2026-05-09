@@ -6,7 +6,7 @@
  */
 
 import { AgentRuntime } from '../ai/agent-runtime'
-import type { AgentProfile } from '../ai/a2a-types'
+import type { AgentProfile, ObservationTool } from '../ai/a2a-types'
 import { bus, type BusEvent } from './event-bus'
 import { taskQueue, type ClaimResult } from './task-queue'
 import type { SessionConfig } from '../ai/provider'
@@ -123,6 +123,23 @@ export class RuntimeRegistry {
     try {
       const context = task.context ? JSON.parse(task.context) as Array<{ role: string; content: string }> : []
 
+      // Build tools for Agent self-fetch (Path B — aligns with Slock/Multica pull model)
+      const conversationId = task.conversationId
+      const readMessagesTool: ObservationTool = {
+        name: 'readMessages',
+        description: '读取对话历史，了解最近的讨论内容和上下文。使用此工具可以帮助你做出更准确的判断和回复。',
+        parameters: {
+          limit: { type: 'number', description: '返回最近 N 条消息，默认50，最大100' },
+        },
+        execute: async (args: Record<string, unknown>) => {
+          const limit = Math.min(typeof args.limit === 'number' ? args.limit : 50, 100)
+          const history = taskQueue.getConversationHistory(conversationId, limit)
+          return history.length > 0
+            ? history.join('\n\n')
+            : '（暂无对话历史）'
+        },
+      }
+
       // Phase 3: Resume session if available
       const lastSessionId = task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId)
       if (lastSessionId && this.config) {
@@ -138,6 +155,7 @@ export class RuntimeRegistry {
         message: task.message,
         context,
         collaborationMode: 'open_floor',
+        tools: [readMessagesTool],
       })
 
       // Phase 3: Persist session ID for next round
@@ -228,6 +246,12 @@ export class RuntimeRegistry {
   resetConversationTracking(conversationId: string): void {
     this.responseCounts.delete(conversationId)
     this.lastResponseTime.delete(conversationId)
+  }
+
+  /** Reset all tracking state (used in tests for isolation) */
+  resetAllTracking(): void {
+    this.responseCounts.clear()
+    this.lastResponseTime.clear()
   }
 
   private onMessageNew(resident: ResidentRuntime, event: BusEvent): void {

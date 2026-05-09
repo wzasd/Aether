@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { AgentProfile, Observation } from '../../ai/a2a-types'
+import type { AgentProfile, Observation, ObservationTool } from '../../ai/a2a-types'
 import type { SessionConfig } from '../../ai/provider'
 
 const mockObservations = new Map<string, (obs: Observation) => Promise<{ reply?: string; relevanceScore: number }>>()
@@ -10,7 +10,7 @@ vi.mock('../../ai/agent-runtime', () => ({
     start: vi.fn(async () => ({ id: `session-${profile.id}` })),
     onObservation: vi.fn(async (obs: Observation) => {
       const handler = mockObservations.get(profile.id)
-      return handler ? handler(obs) : { reply: `${profile.name} reply`, relevanceScore: 0.8 }
+      return handler ? await handler(obs) : { reply: `${profile.name} reply`, relevanceScore: 0.8 }
     }),
     abort: vi.fn(),
     dispose: vi.fn(async () => {}),
@@ -32,7 +32,7 @@ function resetMockDb(): void {
 }
 
 function mockPrepare(sql: string) {
-  const lower = sql.toLowerCase()
+  const lower = sql.toLowerCase().replace(/\s+/g, ' ')
   
   return {
     run: vi.fn((...args: unknown[]) => {
@@ -64,17 +64,27 @@ function mockPrepare(sql: string) {
         const table = tableMatch ? tableMatch[1] : 'unknown'
         const rows = mockDbState.tables.get(table) ?? []
         
-        // Parse SET clauses
+        // Parse SET clauses — handle both ? placeholders and hardcoded values
         const setMatch = lower.match(/set\s+(.+?)(?:where|returning|$)/)
         const updates: Record<string, unknown> = {}
         if (setMatch) {
           const setParts = setMatch[1].split(',')
-          setParts.forEach((part, idx) => {
+          setParts.forEach((part) => {
             const colMatch = part.match(/(\w+)\s*=\s*\?/)
-            if (colMatch && idx < args.length) {
-              updates[colMatch[1]] = args[idx]
+            if (colMatch) {
+              const argIdx = updates['__argIdx__'] as number ?? 0
+              if (argIdx < args.length) {
+                updates[colMatch[1]] = args[argIdx]
+                updates['__argIdx__'] = argIdx + 1
+              }
+            } else {
+              const hardcodedMatch = part.match(/(\w+)\s*=\s*'([^']+)'/)
+              if (hardcodedMatch) {
+                updates[hardcodedMatch[1]] = hardcodedMatch[2]
+              }
             }
           })
+          delete updates['__argIdx__']
         }
         
         // Find and update matching rows
@@ -87,8 +97,8 @@ function mockPrepare(sql: string) {
           // Simple WHERE parsing for common patterns
           if (lower.includes('where')) {
             if (lower.includes('id = ?')) {
-              const idIdx = setMatch ? setMatch[1].split(',').length : 0
-              matches = row['id'] === args[idIdx]
+              // id is always the last parameter in TaskQueue methods
+              matches = row['id'] === args[args.length - 1]
             }
             if (lower.includes('agent_profile_id = ?')) {
               const idx = setMatch ? setMatch[1].split(',').length : 0
@@ -255,7 +265,6 @@ vi.mock('../../core/logging', () => ({
 import { RuntimeRegistry } from '../runtime-registry'
 import { bus } from '../event-bus'
 import { taskQueue } from '../task-queue'
-import { resetMockDb } from '../../core/__mocks__/db'
 
 const profiles: AgentProfile[] = [
   {
@@ -516,5 +525,92 @@ describe('RuntimeRegistry', () => {
     // Initialize but don't start
     await registry.initialize(profiles, config)
     await expect(registry.claimAndExecute('coder')).resolves.not.toThrow()
+  })
+
+  // ─── Tool Injection (Path B) ──────────────────────────────────────
+
+  it('passes readMessages tool to onObservation (Path B)', async () => {
+    await registry.initialize(profiles, config)
+    await registry.startAll()
+
+    let capturedTools: ObservationTool[] | undefined
+    mockObservations.set('coder', async (obs) => {
+      capturedTools = obs.tools
+      return { reply: 'ok', relevanceScore: 0.9 }
+    })
+
+    taskQueue.enqueue({
+      conversationId: 'conv-tool-1',
+      agentProfileId: 'coder',
+      message: 'test tool injection',
+    })
+
+    await registry.claimAndExecute('coder')
+
+    expect(capturedTools).toBeDefined()
+    expect(capturedTools).toHaveLength(1)
+    expect(capturedTools![0].name).toBe('readMessages')
+    expect(capturedTools![0].parameters.limit).toEqual({
+      type: 'number',
+      description: expect.stringContaining('50'),
+    })
+  })
+
+  it('readMessages tool executes getConversationHistory', async () => {
+    await registry.initialize(profiles, config)
+    await registry.startAll()
+
+    let capturedTools: ObservationTool[] | undefined
+    mockObservations.set('coder', async (obs) => {
+      capturedTools = obs.tools
+      return { reply: 'history test reply', relevanceScore: 0.9 }
+    })
+
+    taskQueue.enqueue({
+      conversationId: 'conv-hist-1',
+      agentProfileId: 'coder',
+      message: 'unique marker 42a7b',
+    })
+
+    await registry.claimAndExecute('coder')
+
+    expect(capturedTools).toBeDefined()
+    expect(capturedTools).toHaveLength(1)
+    const readMsgs = capturedTools![0]
+    expect(readMsgs.name).toBe('readMessages')
+
+    // Execute tool — should return history containing the enqueued message
+    const result = await readMsgs.execute({ limit: 50 })
+    expect(typeof result).toBe('string')
+    expect(result.length).toBeGreaterThan(0)
+    expect(result).toContain('unique marker 42a7b')
+  })
+
+  it('readMessages tool returns history as string', async () => {
+    await registry.initialize(profiles, config)
+    await registry.startAll()
+
+    let capturedTools: ObservationTool[] | undefined
+    mockObservations.set('coder', async (obs) => {
+      capturedTools = obs.tools
+      return { reply: 'ok', relevanceScore: 0.9 }
+    })
+
+    taskQueue.enqueue({
+      conversationId: 'conv-limit',
+      agentProfileId: 'coder',
+      message: 'test limit marker',
+    })
+
+    await registry.claimAndExecute('coder')
+
+    expect(capturedTools).toBeDefined()
+    const readMsgs = capturedTools![0]
+
+    // Tool executes without error and returns conversation data
+    const result = await readMsgs.execute({ limit: 50 })
+    expect(typeof result).toBe('string')
+    expect(result.length).toBeGreaterThan(0)
+    expect(result).toContain('test limit marker')
   })
 })

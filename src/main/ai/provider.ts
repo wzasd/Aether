@@ -88,7 +88,7 @@ export interface CLIProvider {
 
   startSession(config: SessionConfig): Promise<Session>
   endSession(sessionId: string): Promise<void>
-  sendMessage(sessionId: string, content: string): void
+  sendMessage(sessionId: string, content: string, opts?: { parentToolUseId?: string }): void
   respondPermission(sessionId: string, approved: boolean): void
   respondQuestion(sessionId: string, answer: string): void
   abort(sessionId: string): void

@@ -202,6 +202,26 @@ export class TaskQueue {
     return rows.map((r) => this.rowToTask(r))
   }
 
+  /** Get conversation history for Agent context (newest first, limited).
+   *  Returns formatted messages suitable for LLM prompt injection.
+   *  Each entry includes agent/role, message/result, and timestamp. */
+  getConversationHistory(conversationId: string, limit: number = 50): string[] {
+    const tasks = this.getConversationTasks(conversationId)
+    const entries: string[] = []
+
+    for (const task of tasks) {
+      // Original message/task
+      entries.push(`[${task.agentProfileId}] ${task.message}`)
+      // Result if completed
+      if (task.result && task.result !== '[NO_REPLY]') {
+        entries.push(`[${task.agentProfileId}]: ${task.result}`)
+      }
+    }
+
+    // Return newest first, limited
+    return entries.reverse().slice(0, limit)
+  }
+
   /** Get active (claimed/running) tasks for an agent */
   getAgentActiveTasks(agentProfileId: string): AgentTask[] {
     const rows = this.db.prepare(

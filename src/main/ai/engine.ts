@@ -28,10 +28,10 @@ export class AIEngine {
     this.sessions.delete(sessionId)
   }
 
-  sendMessage(sessionId: string, content: string): void {
+  sendMessage(sessionId: string, content: string, opts?: { parentToolUseId?: string }): void {
     const record = this.sessions.get(sessionId)
     if (!record) throw new Error('Session not found')
-    record.provider.sendMessage(sessionId, content)
+    record.provider.sendMessage(sessionId, content, opts)
   }
 
   respondPermission(sessionId: string, approved: boolean): void {

@@ -10,11 +10,19 @@ export type PermissionMode = 'manual' | 'autoEdit' | 'plan' | 'fullAuto' | 'trus
 
 export type ReflowState = 'pending' | 'running' | 'partial' | 'done' | 'timeout' | 'failed'
 
+export interface ObservationTool {
+  name: string
+  description: string
+  parameters: Record<string, { type: string; description: string }>
+  execute: (args: Record<string, unknown>) => Promise<string>
+}
+
 export interface Observation {
   conversationId: string
   message: string
   context: Array<{ role: string; content: string }>
   collaborationMode: 'open_floor'
+  tools?: ObservationTool[]
 }
 
 export interface OpenFloorResponse {

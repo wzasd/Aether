@@ -96,7 +96,7 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
     this.sessions.delete(sessionId)
   }
 
-  sendMessage(sessionId: string, content: string): void {
+  sendMessage(sessionId: string, content: string, opts?: { parentToolUseId?: string }): void {
     const entry = this.sessions.get(sessionId)
     if (!entry) return
 
@@ -112,14 +112,20 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
 
     if (!entry.process?.stdin?.writable) return
 
+    const parentToolUseId = opts?.parentToolUseId ?? null
+
+    const contentBlock = parentToolUseId
+      ? { type: 'tool_result', tool_use_id: parentToolUseId, content }
+      : { type: 'text', text: content }
+
     const msg = JSON.stringify({
       type: 'user',
       session_id: sessionId,
       message: {
         role: 'user',
-        content: [{ type: 'text', text: content }]
+        content: [contentBlock]
       },
-      parent_tool_use_id: null
+      parent_tool_use_id: parentToolUseId
     }) + '\n'
 
     entry.process.stdin.write(msg)

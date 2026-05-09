@@ -26,6 +26,7 @@ vi.mock('../../core/logging', () => ({
 import { Daemon } from '../daemon'
 import { bus } from '../event-bus'
 import { taskQueue } from '../task-queue'
+import { runtimeRegistry } from '../runtime-registry'
 import { resetMockDb } from '../../core/__mocks__/db'
 
 const profiles: AgentProfile[] = [
@@ -80,6 +81,7 @@ describe('Daemon', () => {
     bus.clear()
     vi.clearAllMocks()
     resetMockDb()
+    runtimeRegistry.resetAllTracking()
   })
 
   afterEach(async () => {
