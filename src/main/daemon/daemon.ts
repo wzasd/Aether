@@ -15,6 +15,7 @@ import type { WebContents } from 'electron'
 import { bus } from './event-bus'
 import { taskQueue } from './task-queue'
 import { runtimeRegistry } from './runtime-registry'
+import { agentMemory, type MemoryEntry } from './agent-memory'
 import type { SessionConfig } from '../ai/provider'
 import type { AgentProfile } from '../ai/a2a-types'
 
@@ -135,6 +136,9 @@ export class Daemon {
       type: 'open_floor:start',
       conversationId,
     })
+
+    // Track conversation for completion detection
+    this.trackedConversations.add(conversationId)
   }
 
   /** Abort all tasks for a conversation */
@@ -169,6 +173,9 @@ export class Daemon {
     let anyTaskExecuted = false
 
     for (const resident of runtimeRegistry.getAllActive()) {
+      // Aligns with Slock: skip if agent is already processing (busy state)
+      if (resident.isProcessing) continue
+
       // Check if this agent has capacity and pending tasks
       const pendingCount = taskQueue.countPending(resident.profile.id)
       if (pendingCount === 0) continue
@@ -189,13 +196,32 @@ export class Daemon {
     }
   }
 
-  private checkConversationsComplete(): void {
+  private async checkConversationsComplete(): Promise<void> {
     for (const conversationId of Array.from(this.trackedConversations)) {
       const allTasks = taskQueue.getConversationTasks(conversationId)
       const hasActiveOrPending = allTasks.some((t) =>
         t.status === 'pending' || t.status === 'claimed' || t.status === 'running'
       )
       if (!hasActiveOrPending && allTasks.length > 0) {
+        // Phase B: trigger memory update for agents that participated
+        const participantIds = Array.from(new Set(allTasks.map((t) => t.agentProfileId)))
+        for (const profileId of participantIds) {
+          const agentTasks = allTasks.filter((t) => t.agentProfileId === profileId && t.result && t.result !== '[NO_REPLY]')
+          if (agentTasks.length > 0) {
+            const lastTask = agentTasks[agentTasks.length - 1]
+            const entry: MemoryEntry = {
+              topic: this.extractTopic(lastTask.message),
+              conclusion: this.summarizeForMemory(lastTask.result!),
+              category: this.categorizeForMemory(lastTask.result!),
+              source: 'conversation_end',
+              timestamp: Date.now(),
+            }
+            agentMemory.append(profileId, entry).catch((err) => {
+              console.warn(`[Daemon] memory update failed for ${profileId}:`, err)
+            })
+          }
+        }
+
         bus.publish({
           type: 'open_floor:closed',
           conversationId,
@@ -206,6 +232,28 @@ export class Daemon {
         this.trackedConversations.delete(conversationId)
       }
     }
+  }
+
+  // ─── Phase B: Memory helpers (rule-driven, zero token cost) ───────────
+
+  private extractTopic(message: string): string {
+    // Take the first line or first 100 chars, whichever is shorter
+    const firstLine = message.split('\n')[0].replace(/^##\s*/, '').trim()
+    return firstLine.length > 100 ? firstLine.slice(0, 97) + '...' : firstLine
+  }
+
+  private summarizeForMemory(reply: string): string {
+    // Take first 200 chars as summary, strip markdown formatting
+    const clean = reply.replace(/[#*`>|]/g, '').replace(/\n+/g, ' ').trim()
+    return clean.length > 200 ? clean.slice(0, 197) + '...' : clean
+  }
+
+  private categorizeForMemory(reply: string): MemoryEntry['category'] {
+    const lower = reply.toLowerCase()
+    if (lower.includes('决策') || lower.includes('decided') || lower.includes('决定')) return 'decision'
+    if (lower.includes('偏好') || lower.includes('建议') || lower.includes('prefer') || lower.includes('recommend')) return 'preference'
+    if (lower.includes('反馈') || lower.includes('review') || lower.includes('feedback')) return 'feedback'
+    return 'context'
   }
 
   private heartbeat(): void {

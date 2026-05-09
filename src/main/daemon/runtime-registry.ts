@@ -8,15 +8,24 @@
 import { AgentRuntime } from '../ai/agent-runtime'
 import type { AgentProfile, ObservationTool } from '../ai/a2a-types'
 import { bus, type BusEvent } from './event-bus'
-import { taskQueue, type ClaimResult } from './task-queue'
+import { taskQueue, type ClaimResult, type EnqueueTaskParams } from './task-queue'
 import type { SessionConfig } from '../ai/provider'
+
+/** A pending message waiting to be enqueued when the agent becomes idle */
+interface PendingMessage {
+  params: EnqueueTaskParams
+  enqueuedAt: number
+}
 
 export interface ResidentRuntime {
   profile: AgentProfile
   runtime: AgentRuntime
   isActive: boolean
+  isProcessing: boolean // Aligns with Slock: Agent has an active/busy state
   maxConcurrentTasks: number
+  maxQueueSize: number // Aligns with Slock: per-Agent queue capacity (max=5)
   claimedTasks: Set<string>
+  pendingMessages: PendingMessage[] // Aligns with Slock: per-Agent message queue
 }
 
 export class RuntimeRegistry {
@@ -42,8 +51,11 @@ export class RuntimeRegistry {
         profile,
         runtime,
         isActive: false,
-        maxConcurrentTasks: 2, // default, could be configurable per agent
+        isProcessing: false,
+        maxConcurrentTasks: 2,
+        maxQueueSize: 5, // Aligns with Slock: max=5 concurrent per agent
         claimedTasks: new Set(),
+        pendingMessages: [],
       }
 
       this.runtimes.set(profile.id, resident)
@@ -76,14 +88,44 @@ export class RuntimeRegistry {
     for (const [profileId, resident] of Array.from(this.runtimes.entries())) {
       if (resident.isActive) {
         try {
+          resident.runtime.suspend() // Aligns with Slock: explicit stop
           await resident.runtime.dispose()
           resident.isActive = false
+          resident.isProcessing = false
+          resident.pendingMessages = []
           console.info('[RuntimeRegistry] stopped:', resident.profile.name)
         } catch (err) {
           console.error('[RuntimeRegistry] stop failed:', resident.profile.name, err)
         }
       }
     }
+  }
+
+  /** Suspend a single agent (aligns with Slock: on-demand stop) */
+  suspendAgent(profileId: string): boolean {
+    const resident = this.runtimes.get(profileId)
+    if (!resident || !resident.isActive) return false
+    resident.runtime.suspend()
+    resident.isProcessing = false
+    console.info('[RuntimeRegistry] suspended:', resident.profile.name)
+    return true
+  }
+
+  /** Resume a single agent (aligns with Slock: on-demand start) */
+  async resumeAgent(profileId: string): Promise<boolean> {
+    const resident = this.runtimes.get(profileId)
+    if (!resident || !this.config) return false
+    if (!resident.runtime.isActive) {
+      try {
+        await resident.runtime.resume(this.config)
+      } catch (err) {
+        console.error('[RuntimeRegistry] resume failed:', resident.profile.name, err)
+        return false
+      }
+    }
+    resident.isActive = true
+    console.info('[RuntimeRegistry] resumed:', resident.profile.name)
+    return true
   }
 
   /** Get a resident runtime by profile ID */
@@ -101,11 +143,18 @@ export class RuntimeRegistry {
     const resident = this.runtimes.get(profileId)
     if (!resident || !resident.isActive) return
 
+    // Aligns with Slock: skip if agent is already processing (busy state)
+    if (resident.isProcessing) {
+      console.debug('[RuntimeRegistry] agent busy, skipping claim:', resident.profile.name)
+      return
+    }
+
     const claim: ClaimResult = taskQueue.claim(profileId, resident.maxConcurrentTasks)
     if (claim.reason !== 'claimed' || !claim.task) return
 
     const task = claim.task
     resident.claimedTasks.add(task.id)
+    resident.isProcessing = true // Aligns with Slock: mark as busy
     taskQueue.start(task.id)
 
     // Notify frontend that this agent has started thinking
@@ -140,14 +189,14 @@ export class RuntimeRegistry {
         },
       }
 
-      // Phase 3: Resume session if available
-      const lastSessionId = task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId)
-      if (lastSessionId && this.config) {
-        this.config = { ...this.config, sessionId: lastSessionId }
-        // Restart runtime with resume config if needed
-        if (!resident.runtime.isActive) {
-          await resident.runtime.start(this.config)
-        }
+      // Aligns with Slock: reuse active runtime (process reuse).
+      // Only start a new session if the runtime is not already active.
+      if (!resident.runtime.isActive && this.config) {
+        const lastSessionId = task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId)
+        const resumeConfig = lastSessionId
+          ? { ...this.config, sessionId: lastSessionId }
+          : this.config
+        await resident.runtime.start(resumeConfig)
       }
 
       const result = await resident.runtime.onObservation({
@@ -189,6 +238,18 @@ export class RuntimeRegistry {
       taskQueue.fail(task.id, errorMsg)
     } finally {
       resident.claimedTasks.delete(task.id)
+      resident.isProcessing = false // Aligns with Slock: mark as idle
+      // Dequeue pending messages now that agent is idle
+      this.dequeuePending(resident)
+    }
+  }
+
+  /** Dequeue pending messages for an idle agent (aligns with Slock: while busy → queue) */
+  private dequeuePending(resident: ResidentRuntime): void {
+    while (resident.pendingMessages.length > 0 && !resident.isProcessing) {
+      const pending = resident.pendingMessages.shift()!
+      taskQueue.enqueue(pending.params)
+      console.debug('[RuntimeRegistry] dequeued pending message for:', resident.profile.name, '(queue:', resident.pendingMessages.length, ')')
     }
   }
 
@@ -263,12 +324,24 @@ export class RuntimeRegistry {
     // Build context from event payload
     const context = payload.context ?? []
 
-    taskQueue.enqueue({
+    const params: EnqueueTaskParams = {
       conversationId: event.conversationId,
       agentProfileId: resident.profile.id,
       message: messageContent,
       context,
-    })
+    }
+
+    // Aligns with Slock: if agent is busy, queue the message locally
+    if (resident.isProcessing) {
+      if (resident.pendingMessages.length < resident.maxQueueSize) {
+        resident.pendingMessages.push({ params, enqueuedAt: Date.now() })
+        console.debug('[RuntimeRegistry] queued message for busy agent:', resident.profile.name, '(queue:', resident.pendingMessages.length, ')')
+      } else {
+        console.warn('[RuntimeRegistry] queue full, dropping message for:', resident.profile.name)
+      }
+    } else {
+      taskQueue.enqueue(params)
+    }
   }
 
   private onMessageReply(_resident: ResidentRuntime, _event: BusEvent): void {

@@ -7,6 +7,7 @@ import type { SessionConfig, Session } from './provider'
 import type { AIEvent } from './types'
 import type { ParsedMention } from './a2a-types'
 import { OPEN_FLOOR_INSTRUCTION, OPEN_FLOOR_ALLOWED_TOOLS } from './prompts/open-floor'
+import { agentMemory } from '../daemon/agent-memory'
 
 export interface AgentMentionEvent {
   type: 'agent_mention'
@@ -55,6 +56,7 @@ export class AgentRuntime extends EventEmitter {
   private lastWorkingDir: string = ''
   private lastProviderType: string = ''
   private observationSessionId: string | null = null
+  private _suspended = false // Aligns with Slock: explicit start/stop lifecycle
 
   constructor(profile: AgentProfile) {
     super()
@@ -77,6 +79,24 @@ export class AgentRuntime extends EventEmitter {
 
     if (this.profile.systemPrompt) {
       systemPromptParts.push(this.profile.systemPrompt)
+    }
+
+    // Phase B: load agent memory and inject as context
+    if (this.profile.id !== 'default') {
+      try {
+        const memoryContent = await agentMemory.load(this.profile.id)
+        if (memoryContent) {
+          systemPromptParts.push(`## 你的持久记忆\n\n以下是你在过往对话中积累的知识。请将其作为参考，但不要逐字复述：\n\n${memoryContent}`)
+          console.debug(`[AgentRuntime] ${this.profile.name}: memory injected (${memoryContent.length} chars)`)
+        } else {
+          await agentMemory.initialize(this.profile.id, {
+            name: this.profile.name,
+            role: this.profile.role,
+          })
+        }
+      } catch (err) {
+        console.warn(`[AgentRuntime] ${this.profile.name}: memory load failed, continuing without memory:`, err)
+      }
     }
 
     const otherAgents = this.knownAgents.filter((a) => a.id !== this.profile.id)
@@ -157,6 +177,26 @@ export class AgentRuntime extends EventEmitter {
       aiEngine.abort(this.observationSessionId)
       this.observationSessionId = null
     }
+  }
+
+  /** Suspend the runtime — abort active sessions but keep profile/config (aligns with Slock: explicit stop) */
+  suspend(): void {
+    this._suspended = true
+    this.abort()
+    console.info(`[AgentRuntime] ${this.profile.name}: suspended`)
+  }
+
+  /** Resume the runtime from suspended state (aligns with Slock: explicit start) */
+  async resume(config: SessionConfig, overrides?: { providerType?: string; model?: string }): Promise<Session> {
+    this._suspended = false
+    const session = await this.start(config, overrides)
+    console.info(`[AgentRuntime] ${this.profile.name}: resumed`)
+    return session
+  }
+
+  /** Check if the runtime is suspended */
+  get isSuspended(): boolean {
+    return this._suspended
   }
 
   // ─── Open Floor / Observation Mode ─────────────────────────────────────────
