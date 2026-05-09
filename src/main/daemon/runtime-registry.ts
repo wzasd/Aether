@@ -23,6 +23,13 @@ export class RuntimeRegistry {
   private runtimes = new Map<string, ResidentRuntime>() // profileId -> ResidentRuntime
   private config: SessionConfig | null = null
 
+  // Loop safeguards per conversation
+  private responseCounts = new Map<string, Map<string, number>>() // conversationId -> { agentProfileId -> count }
+  private lastResponseTime = new Map<string, Map<string, number>>() // conversationId -> { agentProfileId -> timestamp }
+  private readonly MAX_RESPONSES_PER_AGENT = 5
+  private readonly COOLDOWN_MS = 2000
+  private readonly CONVERSATION_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
+
   /** Initialize all resident runtimes from profiles */
   async initialize(profiles: AgentProfile[], baseConfig: SessionConfig): Promise<void> {
     this.config = baseConfig
@@ -125,6 +132,7 @@ export class RuntimeRegistry {
 
       if (result.reply) {
         taskQueue.complete(task.id, result.reply)
+        this.trackResponse(task.conversationId, profileId)
 
         // Publish the reply back to the bus so other agents can see it
         bus.publish({
@@ -150,28 +158,85 @@ export class RuntimeRegistry {
     }
   }
 
-  private onMessageNew(resident: ResidentRuntime, event: BusEvent): void {
-    if (!resident.isActive) return
+  /**
+   * Decide whether this agent should respond to a new message.
+   * Uses a lightweight heuristic (no LLM call) for speed:
+   * - Always respond to the first user message in a conversation
+   * - Skip if agent has reached max responses
+   * - Skip if agent is in cooldown period
+   * - Skip if agent is the one who sent the message
+   */
+  private shouldRespond(resident: ResidentRuntime, event: BusEvent): boolean {
+    if (!resident.isActive) return false
 
-    // Enqueue a task for this agent to process the new message
-    const payload = event.payload as { message: string; context?: Array<{ role: string; content: string }> }
+    const conversationId = event.conversationId
+    const agentId = resident.profile.id
+
+    // Don't respond to your own messages
+    if (event.actorId === agentId) return false
+
+    // Check max responses per conversation
+    const convCounts = this.responseCounts.get(conversationId) ?? new Map()
+    const count = convCounts.get(agentId) ?? 0
+    if (count >= this.MAX_RESPONSES_PER_AGENT) {
+      console.debug('[RuntimeRegistry] max responses reached:', resident.profile.name, conversationId)
+      return false
+    }
+
+    // Check cooldown
+    const convCooldowns = this.lastResponseTime.get(conversationId) ?? new Map()
+    const lastTime = convCooldowns.get(agentId) ?? 0
+    if (Date.now() - lastTime < this.COOLDOWN_MS) {
+      console.debug('[RuntimeRegistry] cooldown active:', resident.profile.name, conversationId)
+      return false
+    }
+
+    // Check conversation timeout
+    // TODO: Track conversation start time and enforce timeout
+
+    return true
+  }
+
+  /** Track that this agent has responded */
+  private trackResponse(conversationId: string, agentProfileId: string): void {
+    const convCounts = this.responseCounts.get(conversationId) ?? new Map()
+    convCounts.set(agentProfileId, (convCounts.get(agentProfileId) ?? 0) + 1)
+    this.responseCounts.set(conversationId, convCounts)
+
+    const convCooldowns = this.lastResponseTime.get(conversationId) ?? new Map()
+    convCooldowns.set(agentProfileId, Date.now())
+    this.lastResponseTime.set(conversationId, convCooldowns)
+  }
+
+  /** Reset tracking for a conversation (called on abort/complete) */
+  resetConversationTracking(conversationId: string): void {
+    this.responseCounts.delete(conversationId)
+    this.lastResponseTime.delete(conversationId)
+  }
+
+  private onMessageNew(resident: ResidentRuntime, event: BusEvent): void {
+    if (!this.shouldRespond(resident, event)) return
+
+    const payload = event.payload as { content?: string; message?: string; role?: string; context?: Array<{ role: string; content: string }> }
+    const messageContent = payload.content ?? payload.message ?? ''
+
+    // Build context from event payload
+    const context = payload.context ?? []
+
     taskQueue.enqueue({
       conversationId: event.conversationId,
       agentProfileId: resident.profile.id,
-      message: payload.message,
-      context: payload.context,
+      message: messageContent,
+      context,
     })
   }
 
   private onMessageReply(resident: ResidentRuntime, event: BusEvent): void {
-    if (!resident.isActive) return
-    // When another agent replies, this agent may want to respond
-    // The decision is made by the LLM in onObservation based on message content
+    if (!this.shouldRespond(resident, event)) return
+
     const payload = event.payload as { content: string; agentName: string }
 
     // Build a follow-up task with invitation-style prompt
-    // This replaces the hardcoded Chinese template with a neutral English prompt
-    // that aligns with the Open Floor invitation ethos
     const followUpMessage = [
       `## New reply from ${payload.agentName}`,
       '',
@@ -195,6 +260,8 @@ export class RuntimeRegistry {
     taskQueue.cancelPending(event.conversationId)
     // Abort active runtime if working on this conversation
     resident.runtime.abort()
+    // Reset tracking for this conversation
+    this.resetConversationTracking(event.conversationId)
   }
 }
 

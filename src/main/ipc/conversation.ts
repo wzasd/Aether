@@ -6,6 +6,7 @@ import { buildFtsQuery } from '../utils/fts'
 import { buildMarkdownExport, buildJsonExport, sanitizeFilename } from '../utils/export'
 import { estimateCost } from '../ai/pricing'
 import type { ExportOptions } from '../utils/export'
+import { bus } from '../daemon/event-bus'
 
 export interface Conversation {
   id: string
@@ -175,6 +176,21 @@ export function registerConversationIpc(): void {
     ).run(id, data.conversation_id, data.role, data.content, data.thinking ?? null, data.tool_calls ?? null, data.tool_results ?? null, data.usage ?? null, data.parent_tool_use_id ?? null, data.agent_profile_id ?? null, now)
     // Update conversation updated_at
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, data.conversation_id)
+    
+    // Emit event for event-driven agent trigger (Phase 2)
+    bus.publish({
+      type: 'message:new',
+      conversationId: data.conversation_id,
+      actorType: data.role === 'user' ? 'user' : 'agent',
+      actorId: data.agent_profile_id ?? null,
+      payload: {
+        messageId: id,
+        role: data.role,
+        content: data.content,
+        agentProfileId: data.agent_profile_id ?? null,
+      },
+    })
+    
     return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message
   })
 

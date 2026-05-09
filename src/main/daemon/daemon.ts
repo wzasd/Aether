@@ -113,13 +113,14 @@ export class Daemon {
     console.info('[Daemon] stopped')
   }
 
-  /** User sends a message — enqueue tasks for all relevant agents */
+  /** User sends a message — publish event for event-driven agent trigger */
   async onUserMessage(
     conversationId: string,
     message: string,
     context: Array<{ role: string; content: string }>
   ): Promise<void> {
-    // Publish event to bus
+    // Publish event to bus — RuntimeRegistry subscribers will decide
+    // which agents should respond and enqueue tasks accordingly
     bus.publish({
       type: 'message:new',
       conversationId,
@@ -127,17 +128,6 @@ export class Daemon {
       actorId: null,
       payload: { message, context },
     })
-
-    // Also directly enqueue tasks for all active agents (fast path)
-    for (const profile of this.profiles) {
-      if (!profile.isEnabled) continue
-      taskQueue.enqueue({
-        conversationId,
-        agentProfileId: profile.id,
-        message,
-        context,
-      })
-    }
 
     // Notify frontend that Open Floor started
     this.sendToRenderer('ai:event', {
