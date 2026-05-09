@@ -123,12 +123,28 @@ export class RuntimeRegistry {
     try {
       const context = task.context ? JSON.parse(task.context) as Array<{ role: string; content: string }> : []
 
+      // Phase 3: Resume session if available
+      const lastSessionId = task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId)
+      if (lastSessionId && this.config) {
+        this.config = { ...this.config, sessionId: lastSessionId }
+        // Restart runtime with resume config if needed
+        if (!resident.runtime.isActive) {
+          await resident.runtime.start(this.config)
+        }
+      }
+
       const result = await resident.runtime.onObservation({
         conversationId: task.conversationId,
         message: task.message,
         context,
         collaborationMode: 'open_floor',
       })
+
+      // Phase 3: Persist session ID for next round
+      const sessionId = resident.runtime.sessionId
+      if (sessionId) {
+        taskQueue.updateSessionId(task.id, sessionId)
+      }
 
       if (result.reply) {
         taskQueue.complete(task.id, result.reply)

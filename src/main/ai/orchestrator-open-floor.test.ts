@@ -1,55 +1,108 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentProfile, Observation } from './a2a-types'
+import type { AgentProfile } from './a2a-types'
 import type { SessionConfig } from './provider'
 
-type MockRuntime = {
-  profile: AgentProfile
-  isActive: boolean
-  start: ReturnType<typeof vi.fn>
-  setKnownAgents: ReturnType<typeof vi.fn>
-  onObservation: ReturnType<typeof vi.fn>
-  abort: ReturnType<typeof vi.fn>
-  dispose: ReturnType<typeof vi.fn>
+// ─── Mock Daemon ───────────────────────────────────────────────────────────
+const mockDaemon = {
+  isRunning: vi.fn(() => false),
+  initialize: vi.fn(async () => {}),
+  start: vi.fn(async () => {}),
+  stop: vi.fn(async () => {}),
+  onUserMessage: vi.fn(async () => {}),
+  abortConversation: vi.fn(),
 }
 
-const runtimeInstances: MockRuntime[] = []
-let observationHandler: (profile: AgentProfile, observation: Observation) => Promise<{ reply?: string; relevanceScore: number }>
-
-vi.mock('./agent-runtime', () => ({
-  AgentRuntime: vi.fn().mockImplementation((profile: AgentProfile) => {
-    const runtime: MockRuntime = {
-      profile,
-      isActive: false,
-      start: vi.fn(async () => {
-        runtime.isActive = true
-        return { id: `session-${profile.id}` }
-      }),
-      setKnownAgents: vi.fn(),
-      onObservation: vi.fn((observation: Observation) => observationHandler(profile, observation)),
-      abort: vi.fn(() => {
-        runtime.isActive = false
-      }),
-      dispose: vi.fn(async () => {
-        runtime.isActive = false
-      })
-    }
-    runtimeInstances.push(runtime)
-    return runtime
-  })
+vi.mock('../daemon/daemon', () => ({
+  daemon: {
+    isRunning: vi.fn(() => false),
+    initialize: vi.fn(async () => {}),
+    start: vi.fn(async () => {}),
+    stop: vi.fn(async () => {}),
+    onUserMessage: vi.fn(async () => {}),
+    abortConversation: vi.fn(),
+  },
 }))
 
+// ─── Mock EventBus ─────────────────────────────────────────────────────────
+class MockBus {
+  private handlers = new Map<string, Array<(e: unknown) => void>>()
+
+  subscribe(type: string, handler: (e: unknown) => void): void {
+    const list = this.handlers.get(type) ?? []
+    list.push(handler)
+    this.handlers.set(type, list)
+  }
+
+  unsubscribe(type: string, handler: (e: unknown) => void): void {
+    const list = this.handlers.get(type)
+    if (!list) return
+    const idx = list.indexOf(handler)
+    if (idx >= 0) list.splice(idx, 1)
+  }
+
+  publish(event: { type: string }): void {
+    const list = this.handlers.get(event.type) ?? []
+    for (const h of list) h(event)
+  }
+
+  clear(): void {
+    this.handlers.clear()
+  }
+
+  getHandlerCount(type: string): number {
+    return this.handlers.get(type)?.length ?? 0
+  }
+}
+
+const mockBus = new MockBus()
+
+vi.mock('../daemon/event-bus', () => {
+  class MockBus {
+    private handlers = new Map<string, Array<(e: unknown) => void>>()
+
+    subscribe(type: string, handler: (e: unknown) => void): void {
+      const list = this.handlers.get(type) ?? []
+      list.push(handler)
+      this.handlers.set(type, list)
+    }
+
+    unsubscribe(type: string, handler: (e: unknown) => void): void {
+      const list = this.handlers.get(type)
+      if (!list) return
+      const idx = list.indexOf(handler)
+      if (idx >= 0) list.splice(idx, 1)
+    }
+
+    publish(event: { type: string }): void {
+      const list = this.handlers.get(event.type) ?? []
+      for (const h of list) h(event)
+    }
+
+    clear(): void {
+      this.handlers.clear()
+    }
+
+    getHandlerCount(type: string): number {
+      return this.handlers.get(type)?.length ?? 0
+    }
+  }
+
+  return { bus: new MockBus() }
+})
+
+// ─── Mock DB & Logging ─────────────────────────────────────────────────────
 vi.mock('../core/db', () => ({
   getDb: vi.fn(() => ({
     prepare: vi.fn(() => ({
       all: vi.fn(() => []),
       get: vi.fn(() => undefined),
-      run: vi.fn()
-    }))
-  }))
+      run: vi.fn(),
+    })),
+  })),
 }))
 
 vi.mock('../core/logging', () => ({
-  writeObservabilityEvent: vi.fn()
+  writeObservabilityEvent: vi.fn(),
 }))
 
 import { writeObservabilityEvent } from '../core/logging'
@@ -67,7 +120,7 @@ const profiles: AgentProfile[] = [
     isEnabled: true,
     sortOrder: 0,
     createdAt: 0,
-    updatedAt: 0
+    updatedAt: 0,
   },
   {
     id: 'reviewer',
@@ -80,32 +133,30 @@ const profiles: AgentProfile[] = [
     isEnabled: true,
     sortOrder: 1,
     createdAt: 0,
-    updatedAt: 0
-  }
+    updatedAt: 0,
+  },
 ]
 
 const config: SessionConfig = {
   providerType: 'test-provider',
   model: 'test-model',
   workingDir: '/tmp/bytro-test',
-  permissionMode: 'trusted'
+  permissionMode: 'trusted',
 }
 
 function makeWebContents() {
   return {
     isDestroyed: vi.fn(() => false),
-    send: vi.fn()
+    send: vi.fn(),
   }
 }
 
 function resetOrchestratorState(): void {
   const subject = orchestrator as unknown as {
-    runtimes: Map<string, unknown>
-    baseConfigs: Map<string, unknown>
-    webContentsMap: Map<string, unknown>
     openFloorStates: Map<string, unknown>
     conversationModes: Map<string, unknown>
-    openFloorControllers: Map<string, AbortController>
+    webContentsMap: Map<string, unknown>
+    baseConfigs: Map<string, unknown>
     invocationQueue: { clear: (conversationId: string) => void; stopZombieDefense: () => void }
     getConversationTeamId: unknown
     loadAllEnabledProfiles: unknown
@@ -113,31 +164,28 @@ function resetOrchestratorState(): void {
     appendSystemMessage: unknown
   }
 
-  subject.runtimes.clear()
-  subject.baseConfigs.clear()
-  subject.webContentsMap.clear()
   subject.openFloorStates.clear()
   subject.conversationModes.clear()
-  subject.openFloorControllers.clear()
+  subject.webContentsMap.clear()
+  subject.baseConfigs.clear()
   subject.invocationQueue.clear('conv-open-floor')
   subject.invocationQueue.clear('conv-empty')
+  subject.invocationQueue.clear('conv-a')
+  subject.invocationQueue.clear('conv-b')
   subject.getConversationTeamId = vi.fn(() => null)
   subject.loadAllEnabledProfiles = vi.fn(() => profiles)
   subject.buildConversationContext = vi.fn(async () => [
-    { role: 'user', content: 'prior context' }
+    { role: 'user', content: 'prior context' },
   ])
   subject.appendSystemMessage = vi.fn()
 }
 
-describe('AgentOrchestrator Open Floor integration', () => {
+describe('AgentOrchestrator Open Floor (Daemon architecture)', () => {
   beforeEach(() => {
-    runtimeInstances.length = 0
-    observationHandler = async (profile, observation) => ({
-      reply: `${profile.name}: ${observation.message}`,
-      relevanceScore: 0.9
-    })
     resetOrchestratorState()
+    mockBus.clear()
     vi.clearAllMocks()
+    mockDaemon.isRunning.mockReturnValue(false)
   })
 
   afterEach(() => {
@@ -150,7 +198,7 @@ describe('AgentOrchestrator Open Floor integration', () => {
       .stopZombieDefense()
   })
 
-  it('starts enabled agent runtimes and emits Open Floor events from sendUserMessage', async () => {
+  it('initializes daemon on first open_floor message and routes through it', async () => {
     const webContents = makeWebContents()
 
     await orchestrator.sendUserMessage(
@@ -165,76 +213,322 @@ describe('AgentOrchestrator Open Floor integration', () => {
       'open_floor'
     )
 
-    // 2 rounds × 2 agents = 4 runtimes
-    expect(runtimeInstances).toHaveLength(4)
-    for (const runtime of runtimeInstances) {
-      expect(runtime.start).toHaveBeenCalledWith(config)
-      expect(runtime.setKnownAgents).toHaveBeenCalledWith(profiles)
-      expect(runtime.onObservation).toHaveBeenCalledWith(
-        expect.objectContaining({
-          conversationId: 'conv-open-floor',
-          collaborationMode: 'open_floor'
-        })
-      )
-      expect(runtime.dispose).toHaveBeenCalled()
-    }
+    // Should initialize and start daemon
+    expect(mockDaemon.isRunning).toHaveBeenCalled()
+    expect(mockDaemon.initialize).toHaveBeenCalledWith(profiles, config, webContents)
+    expect(mockDaemon.start).toHaveBeenCalled()
 
-    // Each agent replies in both rounds
-    const coderObservations = webContents.send.mock.calls.filter(
-      (call) => call[1]?.type === 'agent_observation' && call[1]?.agentProfileId === 'coder'
-    )
-    const reviewerObservations = webContents.send.mock.calls.filter(
-      (call) => call[1]?.type === 'agent_observation' && call[1]?.agentProfileId === 'reviewer'
-    )
-    expect(coderObservations).toHaveLength(2)
-    expect(reviewerObservations).toHaveLength(2)
-
-    expect(webContents.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({ type: 'open_floor_closed', totalResponses: 4, skippedAgents: 0 })
-    )
-    expect(writeObservabilityEvent).toHaveBeenCalledWith(
-      'open_floor:completed',
-      expect.objectContaining({ conversationId: 'conv-open-floor', totalResponses: 4 })
+    // Should route message through daemon
+    expect(mockDaemon.onUserMessage).toHaveBeenCalledWith(
+      'conv-open-floor',
+      'brainstorm OAuth2 implementation',
+      expect.arrayContaining([expect.objectContaining({ role: 'user' })])
     )
   })
 
-  it('stopOpenFloor aborts registered runtimes and closes the discussion early', async () => {
+  it('does not reinitialize daemon if already running', async () => {
     const webContents = makeWebContents()
-    observationHandler = () => new Promise(() => {})
+    mockDaemon.isRunning.mockReturnValue(true)
 
-    const openFloor = orchestrator.sendUserMessage(
+    await orchestrator.sendUserMessage(
       'conv-open-floor',
       'coder',
-      'stop test',
+      'second message',
       config,
-      'parallel',
+      'serial',
       webContents as never,
       undefined,
       undefined,
       'open_floor'
     )
 
-    await vi.waitFor(() => {
-      expect(runtimeInstances).toHaveLength(2)
-      expect(runtimeInstances.every((runtime) => runtime.onObservation.mock.calls.length === 1)).toBe(true)
-    })
-
-    orchestrator.stopOpenFloor('conv-open-floor')
-    await openFloor
-
-    expect(runtimeInstances.every((runtime) => runtime.abort.mock.calls.length === 1)).toBe(true)
-    expect(webContents.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({ type: 'open_floor_closed', totalResponses: 0 })
-    )
-    expect(writeObservabilityEvent).toHaveBeenCalledWith(
-      'open_floor:stopped',
-      { conversationId: 'conv-open-floor' }
+    expect(mockDaemon.initialize).not.toHaveBeenCalled()
+    expect(mockDaemon.start).not.toHaveBeenCalled()
+    expect(mockDaemon.onUserMessage).toHaveBeenCalledWith(
+      'conv-open-floor',
+      'second message',
+      expect.anything()
     )
   })
 
-  it('handles zero enabled agents without starting runtimes', async () => {
+  it('aborts previous discussion before starting a new one in same conversation', async () => {
+    const webContents = makeWebContents()
+
+    // First open floor
+    await orchestrator.sendUserMessage(
+      'conv-open-floor',
+      'coder',
+      'first topic',
+      config,
+      'serial',
+      webContents as never,
+      undefined,
+      undefined,
+      'open_floor'
+    )
+
+    // Manually set state to active to simulate an ongoing discussion
+    const subject = orchestrator as unknown as { openFloorStates: Map<string, { status: string }> }
+    subject.openFloorStates.set('conv-open-floor', { status: 'active' })
+
+    // Second open floor in same conversation
+    await orchestrator.sendUserMessage(
+      'conv-open-floor',
+      'coder',
+      'second topic',
+      config,
+      'serial',
+      webContents as never,
+      undefined,
+      undefined,
+      'open_floor'
+    )
+
+    expect(mockDaemon.abortConversation).toHaveBeenCalledWith('conv-open-floor')
+  })
+
+  it('forwards agent:thinking events to frontend as agent_thinking', async () => {
+    const webContents = makeWebContents()
+
+    await orchestrator.sendUserMessage(
+      'conv-open-floor',
+      'coder',
+      'test',
+      config,
+      'serial',
+      webContents as never,
+      undefined,
+      undefined,
+      'open_floor'
+    )
+
+    // Simulate daemon publishing agent:thinking event
+    mockBus.publish({
+      type: 'agent:thinking',
+      conversationId: 'conv-open-floor',
+      actorType: 'agent',
+      actorId: 'coder',
+      payload: { agentName: 'Coder', agentRole: 'coder' },
+    })
+
+    expect(webContents.send).toHaveBeenCalledWith(
+      'ai:event',
+      expect.objectContaining({
+        type: 'agent_thinking',
+        conversationId: 'conv-open-floor',
+        agentProfileId: 'coder',
+        agentName: 'Coder',
+        agentRole: 'coder',
+      })
+    )
+  })
+
+  it('forwards message:reply events to frontend as agent_observation', async () => {
+    const webContents = makeWebContents()
+
+    await orchestrator.sendUserMessage(
+      'conv-open-floor',
+      'coder',
+      'test',
+      config,
+      'serial',
+      webContents as never,
+      undefined,
+      undefined,
+      'open_floor'
+    )
+
+    // Simulate daemon publishing message:reply event
+    mockBus.publish({
+      type: 'message:reply',
+      conversationId: 'conv-open-floor',
+      actorType: 'agent',
+      actorId: 'reviewer',
+      payload: {
+        agentName: 'Reviewer',
+        content: 'Use JWT instead',
+        relevanceScore: 0.85,
+      },
+    })
+
+    expect(webContents.send).toHaveBeenCalledWith(
+      'ai:event',
+      expect.objectContaining({
+        type: 'agent_observation',
+        conversationId: 'conv-open-floor',
+        agentProfileId: 'reviewer',
+        agentName: 'Reviewer',
+        content: 'Use JWT instead',
+        relevanceScore: 0.85,
+      })
+    )
+  })
+
+  it('tracks responses in open floor state', async () => {
+    const webContents = makeWebContents()
+
+    await orchestrator.sendUserMessage(
+      'conv-open-floor',
+      'coder',
+      'test',
+      config,
+      'serial',
+      webContents as never,
+      undefined,
+      undefined,
+      'open_floor'
+    )
+
+    // Simulate two replies
+    mockBus.publish({
+      type: 'message:reply',
+      conversationId: 'conv-open-floor',
+      actorType: 'agent',
+      actorId: 'coder',
+      payload: { agentName: 'Coder', content: 'Reply A', relevanceScore: 0.9 },
+    })
+    mockBus.publish({
+      type: 'message:reply',
+      conversationId: 'conv-open-floor',
+      actorType: 'agent',
+      actorId: 'reviewer',
+      payload: { agentName: 'Reviewer', content: 'Reply B', relevanceScore: 0.8 },
+    })
+
+    const subject = orchestrator as unknown as { openFloorStates: Map<string, { responses: Array<unknown> }> }
+    const state = subject.openFloorStates.get('conv-open-floor')!
+    expect(state.responses).toHaveLength(2)
+    expect(state.responses[0]).toMatchObject({ agentId: 'coder', content: 'Reply A' })
+    expect(state.responses[1]).toMatchObject({ agentId: 'reviewer', content: 'Reply B' })
+  })
+
+  it('sends open_floor_closed when daemon emits open_floor:closed', async () => {
+    const webContents = makeWebContents()
+
+    await orchestrator.sendUserMessage(
+      'conv-open-floor',
+      'coder',
+      'test',
+      config,
+      'serial',
+      webContents as never,
+      undefined,
+      undefined,
+      'open_floor'
+    )
+
+    // Simulate a reply then close
+    mockBus.publish({
+      type: 'message:reply',
+      conversationId: 'conv-open-floor',
+      actorType: 'agent',
+      actorId: 'coder',
+      payload: { agentName: 'Coder', content: 'Done', relevanceScore: 0.9 },
+    })
+
+    mockBus.publish({
+      type: 'open_floor:closed',
+      conversationId: 'conv-open-floor',
+      actorType: 'system',
+      actorId: null,
+      payload: { reason: 'all_tasks_complete' },
+    })
+
+    expect(webContents.send).toHaveBeenCalledWith(
+      'ai:event',
+      expect.objectContaining({
+        type: 'open_floor_closed',
+        conversationId: 'conv-open-floor',
+        totalResponses: 1,
+        skippedAgents: 0,
+      })
+    )
+
+    // State should be closed
+    const subject = orchestrator as unknown as { openFloorStates: Map<string, { status: string }> }
+    expect(subject.openFloorStates.get('conv-open-floor')?.status).toBe('closed')
+  })
+
+  it('unsubscribes from bus when open_floor closes', async () => {
+    const webContents = makeWebContents()
+
+    await orchestrator.sendUserMessage(
+      'conv-open-floor',
+      'coder',
+      'test',
+      config,
+      'serial',
+      webContents as never,
+      undefined,
+      undefined,
+      'open_floor'
+    )
+
+    const beforeCount = mockBus.getHandlerCount('agent:thinking')
+    expect(beforeCount).toBeGreaterThan(0)
+
+    mockBus.publish({
+      type: 'open_floor:closed',
+      conversationId: 'conv-open-floor',
+      actorType: 'system',
+      actorId: null,
+      payload: {},
+    })
+
+    expect(mockBus.unsubscribe).toHaveBeenCalledWith('agent:thinking', expect.any(Function))
+    expect(mockBus.unsubscribe).toHaveBeenCalledWith('message:reply', expect.any(Function))
+    expect(mockBus.unsubscribe).toHaveBeenCalledWith('open_floor:closed', expect.any(Function))
+  })
+
+  it('isolates events across multiple conversations', async () => {
+    const wcA = makeWebContents()
+    const wcB = makeWebContents()
+
+    await orchestrator.sendUserMessage(
+      'conv-a',
+      'coder',
+      'topic A',
+      config,
+      'parallel',
+      wcA as never,
+      undefined,
+      undefined,
+      'open_floor'
+    )
+
+    await orchestrator.sendUserMessage(
+      'conv-b',
+      'coder',
+      'topic B',
+      config,
+      'parallel',
+      wcB as never,
+      undefined,
+      undefined,
+      'open_floor'
+    )
+
+    // Simulate reply for conv-a only
+    mockBus.publish({
+      type: 'message:reply',
+      conversationId: 'conv-a',
+      actorType: 'agent',
+      actorId: 'coder',
+      payload: { agentName: 'Coder', content: 'Reply A', relevanceScore: 0.9 },
+    })
+
+    // Only wcA should receive the observation
+    expect(wcA.send).toHaveBeenCalledWith(
+      'ai:event',
+      expect.objectContaining({ type: 'agent_observation', conversationId: 'conv-a' })
+    )
+    expect(wcB.send).not.toHaveBeenCalledWith(
+      'ai:event',
+      expect.objectContaining({ type: 'agent_observation', conversationId: 'conv-a' })
+    )
+  })
+
+  it('handles zero enabled agents gracefully', async () => {
     const subject = orchestrator as unknown as {
       loadAllEnabledProfiles: ReturnType<typeof vi.fn>
       appendSystemMessage: ReturnType<typeof vi.fn>
@@ -254,215 +548,77 @@ describe('AgentOrchestrator Open Floor integration', () => {
       'open_floor'
     )
 
-    expect(runtimeInstances).toHaveLength(0)
-    expect(subject.appendSystemMessage).toHaveBeenCalledWith(
-      webContents,
-      'conv-empty',
-      '没有可用的 Agent 参与讨论'
-    )
-    expect(webContents.send).not.toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({ type: 'agent_observation' })
-    )
+    // Daemon should still be initialized with empty profiles
+    expect(mockDaemon.initialize).toHaveBeenCalledWith([], config, webContents)
+    expect(mockDaemon.onUserMessage).toHaveBeenCalled()
   })
 
-  it('tracks agents that choose not to reply as skipped', async () => {
+  it('ignores events for wrong conversation', async () => {
     const webContents = makeWebContents()
-    observationHandler = async () => ({ reply: undefined, relevanceScore: 0.1 })
 
     await orchestrator.sendUserMessage(
-      'conv-silent',
+      'conv-open-floor',
       'coder',
-      'silent test',
+      'test',
       config,
-      'parallel',
+      'serial',
       webContents as never,
       undefined,
       undefined,
       'open_floor'
     )
 
-    expect(webContents.send).not.toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({ type: 'agent_observation' })
+    // Publish event for a different conversation
+    mockBus.publish({
+      type: 'message:reply',
+      conversationId: 'other-conv',
+      actorType: 'agent',
+      actorId: 'coder',
+      payload: { agentName: 'Coder', content: 'Wrong conv', relevanceScore: 0.9 },
+    })
+
+    // Should not forward to frontend
+    const observationCalls = webContents.send.mock.calls.filter(
+      (call) => call[1]?.type === 'agent_observation'
     )
-    expect(webContents.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({
-        type: 'open_floor_closed',
-        totalResponses: 0,
-        skippedAgents: 2,
-      })
-    )
+    expect(observationCalls).toHaveLength(0)
   })
 
-  it('isolates Open Floor state across multiple conversations', async () => {
-    const wcA = makeWebContents()
-    const wcB = makeWebContents()
-
-    const promiseA = orchestrator.sendUserMessage(
-      'conv-a',
-      'coder',
-      'topic A',
-      config,
-      'parallel',
-      wcA as never,
-      undefined,
-      undefined,
-      'open_floor'
-    )
-
-    const promiseB = orchestrator.sendUserMessage(
-      'conv-b',
-      'coder',
-      'topic B',
-      config,
-      'parallel',
-      wcB as never,
-      undefined,
-      undefined,
-      'open_floor'
-    )
-
-    await Promise.all([promiseA, promiseB])
-
-    // Each conversation should have received its own observations
-    expect(wcA.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({ conversationId: 'conv-a', type: 'agent_observation' })
-    )
-    expect(wcB.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({ conversationId: 'conv-b', type: 'agent_observation' })
-    )
-
-    // Each conversation should have its own closed event
-    const closedEventsA = wcA.send.mock.calls.filter(
-      (call) => call[1]?.type === 'open_floor_closed'
-    )
-    const closedEventsB = wcB.send.mock.calls.filter(
-      (call) => call[1]?.type === 'open_floor_closed'
-    )
-    expect(closedEventsA).toHaveLength(1)
-    expect(closedEventsB).toHaveLength(1)
-  })
-
-  it('recovers gracefully when an agent observation throws', async () => {
+  it('does not break when webContents is destroyed', async () => {
     const webContents = makeWebContents()
-    let callCount = 0
-    observationHandler = async (profile) => {
-      callCount++
-      if (profile.id === 'coder') {
-        throw new Error('Simulated observation failure')
-      }
-      return { reply: `${profile.name} reply`, relevanceScore: 0.8 }
-    }
+    webContents.isDestroyed.mockReturnValue(true)
 
     await orchestrator.sendUserMessage(
-      'conv-error',
+      'conv-open-floor',
       'coder',
-      'error test',
+      'test',
       config,
-      'parallel',
+      'serial',
       webContents as never,
       undefined,
       undefined,
       'open_floor'
     )
 
-    // The non-throwing agent should still produce a response
-    expect(webContents.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({
-        type: 'agent_observation',
-        agentProfileId: 'reviewer',
+    // Simulate events — should not throw even though webContents is destroyed
+    expect(() => {
+      mockBus.publish({
+        type: 'agent:thinking',
+        conversationId: 'conv-open-floor',
+        actorType: 'agent',
+        actorId: 'coder',
+        payload: { agentName: 'Coder' },
       })
-    )
-
-    // The throwing agent should not produce a response in either round
-    const coderObservations = webContents.send.mock.calls.filter(
-      (call) => call[1]?.type === 'agent_observation' && call[1]?.agentProfileId === 'coder'
-    )
-    expect(coderObservations).toHaveLength(0)
-
-    // Reviewer replies in both rounds; coder never replies (skipped once in final tally)
-    expect(webContents.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({
-        type: 'open_floor_closed',
-        totalResponses: 2,
-        skippedAgents: 1,
+      mockBus.publish({
+        type: 'message:reply',
+        conversationId: 'conv-open-floor',
+        actorType: 'agent',
+        actorId: 'coder',
+        payload: { agentName: 'Coder', content: 'Reply', relevanceScore: 0.9 },
       })
-    )
-  })
+    }).not.toThrow()
 
-  it('overwrites stale Open Floor state when a new one starts in the same conversation', async () => {
-    const webContents = makeWebContents()
-
-    // First Open Floor: slow agent that never resolves
-    observationHandler = () => new Promise(() => {})
-    const firstOpenFloor = orchestrator.sendUserMessage(
-      'conv-overwrite',
-      'coder',
-      'first topic',
-      config,
-      'parallel',
-      webContents as never,
-      undefined,
-      undefined,
-      'open_floor'
-    )
-
-    // Wait for first Open Floor to start (runtimes created)
-    await vi.waitFor(() => {
-      expect(runtimeInstances).toHaveLength(2)
-    })
-
-    const firstRuntimes = [...runtimeInstances]
-
-    // Start second Open Floor in the same conversation
-    observationHandler = async (profile, observation) => ({
-      reply: `${profile.name}: ${observation.message}`,
-      relevanceScore: 0.9,
-    })
-    const secondOpenFloor = orchestrator.sendUserMessage(
-      'conv-overwrite',
-      'coder',
-      'second topic',
-      config,
-      'parallel',
-      webContents as never,
-      undefined,
-      undefined,
-      'open_floor'
-    )
-
-    await secondOpenFloor
-
-    // The first Open Floor should have been interrupted (aborted)
-    // and the second should complete normally.
-    // First: 2 runtimes (Round 1 only, because agents never resolve)
-    // Second: 4 runtimes (2 rounds × 2 agents)
-    expect(runtimeInstances).toHaveLength(6) // 2 from first + 4 from second
-
-    // First runtimes should have been aborted by stopOpenFloor before second started
-    for (const runtime of firstRuntimes) {
-      expect(runtime.abort).toHaveBeenCalled()
-    }
-
-    // Second runtimes should have completed normally (not aborted)
-    const secondRuntimes = runtimeInstances.slice(2)
-    for (const runtime of secondRuntimes) {
-      expect(runtime.dispose).toHaveBeenCalled()
-    }
-
-    // Wait for first to finish (it resolves after abort)
-    await firstOpenFloor
-
-    // Should have closed events from both (first is aborted, second completes)
-    const closedEvents = webContents.send.mock.calls.filter(
-      (call) => call[1]?.type === 'open_floor_closed'
-    )
-    expect(closedEvents.length).toBeGreaterThanOrEqual(1)
+    // Nothing sent to destroyed webContents
+    expect(webContents.send).not.toHaveBeenCalled()
   })
 })

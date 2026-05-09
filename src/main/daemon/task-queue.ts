@@ -24,6 +24,7 @@ export interface AgentTask {
   error: string | null
   depth: number // delegation depth for chain tracking
   parentTaskId: string | null
+  sessionId: string | null // For cross-round resume
 }
 
 export interface EnqueueTaskParams {
@@ -33,6 +34,7 @@ export interface EnqueueTaskParams {
   context?: Array<{ role: string; content: string }>
   depth?: number
   parentTaskId?: string
+  sessionId?: string | null
 }
 
 export interface ClaimResult {
@@ -62,7 +64,8 @@ export class TaskQueue {
         result TEXT,
         error TEXT,
         depth INTEGER NOT NULL DEFAULT 0,
-        parent_task_id TEXT
+        parent_task_id TEXT,
+        session_id TEXT
       )
     `).run()
 
@@ -93,12 +96,13 @@ export class TaskQueue {
       error: null,
       depth: params.depth ?? 0,
       parentTaskId: params.parentTaskId ?? null,
+      sessionId: params.sessionId ?? null,
     }
 
     this.db.prepare(`
       INSERT INTO agent_task_queue
-      (id, conversation_id, agent_profile_id, message, context, status, created_at, depth, parent_task_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, conversation_id, agent_profile_id, message, context, status, created_at, depth, parent_task_id, session_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       task.id,
       task.conversationId,
@@ -108,7 +112,8 @@ export class TaskQueue {
       task.status,
       task.createdAt,
       task.depth,
-      task.parentTaskId
+      task.parentTaskId,
+      task.sessionId
     )
 
     return task
@@ -216,6 +221,24 @@ export class TaskQueue {
     return row.count
   }
 
+  /** Get the most recent session ID for an agent in a conversation */
+  getLastSessionId(conversationId: string, agentProfileId: string): string | null {
+    const row = this.db.prepare(
+      `SELECT session_id FROM agent_task_queue
+       WHERE conversation_id = ? AND agent_profile_id = ? AND session_id IS NOT NULL
+       ORDER BY completed_at DESC
+       LIMIT 1`
+    ).get(conversationId, agentProfileId) as { session_id: string | null } | undefined
+    return row?.session_id ?? null
+  }
+
+  /** Update session ID for a task */
+  updateSessionId(taskId: string, sessionId: string): void {
+    this.db.prepare(
+      `UPDATE agent_task_queue SET session_id = ? WHERE id = ?`
+    ).run(sessionId, taskId)
+  }
+
   private rowToTask(row: Record<string, unknown>): AgentTask {
     return {
       id: row.id as string,
@@ -231,6 +254,7 @@ export class TaskQueue {
       error: row.error as string | null,
       depth: row.depth as number,
       parentTaskId: row.parent_task_id as string | null,
+      sessionId: row.session_id as string | null,
     }
   }
 }
