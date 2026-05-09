@@ -101,6 +101,18 @@ export class RuntimeRegistry {
     resident.claimedTasks.add(task.id)
     taskQueue.start(task.id)
 
+    // Notify frontend that this agent has started thinking
+    bus.publish({
+      type: 'agent:thinking',
+      conversationId: task.conversationId,
+      actorType: 'agent',
+      actorId: profileId,
+      payload: {
+        agentName: resident.profile.name,
+        agentRole: resident.profile.role,
+      },
+    })
+
     try {
       const context = task.context ? JSON.parse(task.context) as Array<{ role: string; content: string }> : []
 
@@ -157,11 +169,23 @@ export class RuntimeRegistry {
     // The decision is made by the LLM in onObservation based on message content
     const payload = event.payload as { content: string; agentName: string }
 
-    // Build a follow-up task
+    // Build a follow-up task with invitation-style prompt
+    // This replaces the hardcoded Chinese template with a neutral English prompt
+    // that aligns with the Open Floor invitation ethos
+    const followUpMessage = [
+      `## New reply from ${payload.agentName}`,
+      '',
+      payload.content,
+      '',
+      '---',
+      '',
+      'You are participating in an open discussion. If you have something to add, disagree with, or want to build upon the above, feel free to share your perspective. If you have nothing to add, respond with NO_REPLY.',
+    ].join('\n')
+
     taskQueue.enqueue({
       conversationId: event.conversationId,
       agentProfileId: resident.profile.id,
-      message: `${payload.agentName} 回复了：\n\n${payload.content}\n\n你怎么看？`,
+      message: followUpMessage,
     })
   }
 

@@ -163,6 +163,7 @@ class AgentOrchestrator {
     if (mode === 'open_floor') {
       // Initialize daemon on first open_floor use
       if (!daemon.isRunning()) {
+        const teamId = this.getConversationTeamId(conversationId)
         const profiles = teamId
           ? this.loadTeamMemberProfiles(teamId)
           : this.loadAllEnabledProfiles()
@@ -195,6 +196,22 @@ class AgentOrchestrator {
       }
       this.openFloorStates.set(conversationId, state)
 
+      // Subscribe to agent thinking via EventBus
+      const thinkingHandler = (event: { type: string; conversationId: string; actorType: string; actorId: string | null; payload: unknown }): void => {
+        if (event.type !== 'agent:thinking' || event.conversationId !== conversationId) return
+        const payload = event.payload as { agentName: string; agentRole?: string }
+        if (!webContents.isDestroyed()) {
+          webContents.send('ai:event', {
+            type: 'agent_thinking',
+            conversationId,
+            agentProfileId: event.actorId,
+            agentName: payload.agentName,
+            agentRole: payload.agentRole,
+          })
+        }
+      }
+      bus.subscribe('agent:thinking', thinkingHandler)
+
       // Subscribe to agent replies via EventBus for state tracking
       const replyHandler = (event: { type: string; conversationId: string; actorType: string; actorId: string | null; payload: unknown }): void => {
         if (event.type !== 'message:reply' || event.conversationId !== conversationId) return
@@ -206,7 +223,7 @@ class AgentOrchestrator {
           timestamp: Date.now(),
           relevanceScore: payload.relevanceScore ?? 0,
         })
-        // Forward to frontend
+        // Forward to frontend in expected format
         if (!webContents.isDestroyed()) {
           webContents.send('ai:event', {
             type: 'agent_observation',
@@ -224,6 +241,7 @@ class AgentOrchestrator {
       // Listen for open_floor completion via EventBus
       const completeHandler = (event: { type: string; conversationId: string; actorType: string; actorId: string | null; payload: unknown }): void => {
         if (event.type !== 'open_floor:closed' || event.conversationId !== conversationId) return
+        bus.unsubscribe('agent:thinking', thinkingHandler)
         bus.unsubscribe('message:reply', replyHandler)
         bus.unsubscribe('open_floor:closed', completeHandler)
         state.status = 'closed'

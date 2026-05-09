@@ -152,8 +152,12 @@ export class Daemon {
     console.info('[Daemon] cancelled', cancelled, 'pending tasks for', conversationId)
 
     for (const resident of runtimeRegistry.getAllActive()) {
-      // Abort if this runtime is working on the conversation
-      resident.runtime.abort()
+      // Only abort if this runtime has active tasks for the target conversation
+      const activeTasks = taskQueue.getAgentActiveTasks(resident.profile.id)
+      const hasConversationTask = activeTasks.some((t) => t.conversationId === conversationId)
+      if (hasConversationTask) {
+        resident.runtime.abort()
+      }
     }
 
     this.sendToRenderer('ai:event', {
