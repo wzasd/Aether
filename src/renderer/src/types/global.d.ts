@@ -19,8 +19,10 @@ declare global {
     | { type: 'ask_user_question'; confirmId: string; id: string; questions: Array<{ question: string; header?: string; multiSelect?: boolean; options?: Array<{ label: string; description?: string }> }>; sessionId?: string }
     | { type: 'todo_updated'; todos: Array<{ content: string; status: string; activeForm?: string }> }
     | { type: 'subagent_update'; subagent: { id: string; name: string; type: string; status: string } }
-    | { type: 'agent_thinking'; conversationId: string; agentProfileId: string; agentName: string; agentRole?: string }
-    | { type: 'agent_observation'; conversationId: string; agentProfileId: string; agentName: string; content: string; timestamp: number; relevanceScore: number }
+    | { type: 'agent_thinking'; conversationId: string; agentProfileId: string; agentName: string; agentRole?: string; round?: number }
+    | { type: 'agent_observation'; conversationId: string; agentProfileId: string; agentName: string; content: string; timestamp: number; relevanceScore: number; round?: number }
+    | { type: 'open_floor_round_start'; conversationId: string; round: number; maxRounds: number }
+    | { type: 'open_floor_round_complete'; conversationId: string; round: number; replies: number }
     | { type: 'open_floor_closed'; conversationId: string; totalResponses: number; skippedAgents: number }
     | { type: 'subagent_started'; agentId: string; agentType: string; name: string; description?: string; sessionId?: string }
     | { type: 'subagent_stopped'; agentId: string }

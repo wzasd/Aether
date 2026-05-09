@@ -558,118 +558,181 @@ class AgentOrchestrator {
 
     state.pendingAgents = profiles.map((p) => p.id)
 
-    // Use Sets for thread-safe tracking across concurrent agent promises.
-    // Avoids O(n²) array filter calls and the risk of interleaved reads/writes
-    // when multiple promises complete at roughly the same time.
-    const completedAgents = new Set<string>()
-    const skippedAgentsSet = new Set<string>()
-
     // Build full conversation context
     const context = await this.buildConversationContext(conversationId)
-
-    // Broadcast to all agents in parallel
     const baseConfig = this.baseConfigs.get(conversationId)
-    const promises = profiles.map(async (profile) => {
-      // Check early exit before starting any work
-      if (state.status !== 'active' || abortController.signal.aborted) return
 
-      try {
-        // Start a runtime for this agent if needed for observation
-        const runtime = new AgentRuntime(profile)
-        runtime.setKnownAgents(profiles)
+    // ─── Multi-round iterative Open Floor ───────────────────────────────
+    // Round 1: parallel broadcast (same as before)
+    // Round 2+: inject previous round's replies so agents can reference,
+    //   refute, or supplement each other's points — Slock-like group chat.
+    const MAX_OPEN_FLOOR_ROUNDS = 2
+    const allRoundReplies: Array<Array<{ agentId: string; agentName: string; content: string }>> = []
 
-        // Register runtime so it can be aborted/cleaned up
-        const key = runtimeKey(conversationId, profile.id, 'open-floor')
-        this.runtimes.set(key, runtime)
+    for (let round = 1; round <= MAX_OPEN_FLOOR_ROUNDS; round++) {
+      // Check abort at round boundary
+      if (state.status !== 'active' || abortController.signal.aborted) break
+
+      // Build round-specific message: inject previous round replies for round 2+
+      const roundMessage = round === 1
+        ? message
+        : this.buildRoundMessage(message, allRoundReplies[allRoundReplies.length - 1])
+
+      // Emit round marker to frontend
+      if (!webContents.isDestroyed()) {
+        webContents.send('ai:event', {
+          type: 'open_floor_round_start',
+          conversationId,
+          round,
+          maxRounds: MAX_OPEN_FLOOR_ROUNDS,
+        })
+      }
+
+      const completedAgents = new Set<string>()
+      const skippedAgentsSet = new Set<string>()
+      const roundReplies: Array<{ agentId: string; agentName: string; content: string }> = []
+
+      // Broadcast to all agents in parallel within this round
+      const promises = profiles.map(async (profile) => {
+        // Check early exit before starting any work
+        if (state.status !== 'active' || abortController.signal.aborted) return
 
         try {
-          // Start the runtime with base config (or defaults) so it can generate
-          let startFailed = false
-          if (baseConfig) {
-            await runtime.start(baseConfig).catch(() => {
-              // If start fails, agent can't participate — silently skip
+          // Start a runtime for this agent if needed for observation
+          const runtime = new AgentRuntime(profile)
+          runtime.setKnownAgents(profiles)
+
+          // Register runtime so it can be aborted/cleaned up
+          const key = runtimeKey(conversationId, profile.id, `open-floor-r${round}`)
+          this.runtimes.set(key, runtime)
+
+          try {
+            // Start the runtime with base config (or defaults) so it can generate
+            let startFailed = false
+            if (baseConfig) {
+              await runtime.start(baseConfig).catch(() => {
+                // If start fails, agent can't participate — silently skip
+                skippedAgentsSet.add(profile.id)
+                startFailed = true
+              })
+              if (startFailed) return
+            } else {
               skippedAgentsSet.add(profile.id)
-              startFailed = true
-            })
-            if (startFailed) return
-          } else {
-            skippedAgentsSet.add(profile.id)
-            return
-          }
+              return
+            }
 
-          // Notify frontend that this agent has started thinking
-          if (!webContents.isDestroyed()) {
-            webContents.send('ai:event', {
-              type: 'agent_thinking',
-              conversationId,
-              agentProfileId: profile.id,
-              agentName: profile.name,
-              agentRole: profile.role,
-            })
-          }
-
-          // Check abort before expensive observation call
-          if (state.status !== 'active' || abortController.signal.aborted) return
-
-          // Push observation to the agent
-          const result = await runtime.onObservation({
-            conversationId,
-            message,
-            context,
-            collaborationMode: 'open_floor',
-          })
-
-          if (result.reply) {
-            state.responses.push({
-              agentId: profile.id,
-              agentName: profile.name,
-              content: result.reply,
-              timestamp: Date.now(),
-              relevanceScore: result.relevanceScore,
-            })
-            completedAgents.add(profile.id)
-
-            // Emit observation immediately for streaming-like UX —
-            // each agent's reply appears as soon as it finishes, not batched at the end.
+            // Notify frontend that this agent has started thinking
             if (!webContents.isDestroyed()) {
               webContents.send('ai:event', {
-                type: 'agent_observation',
+                type: 'agent_thinking',
                 conversationId,
                 agentProfileId: profile.id,
+                agentName: profile.name,
+                agentRole: profile.role,
+                round,
+              })
+            }
+
+            // Check abort before expensive observation call
+            if (state.status !== 'active' || abortController.signal.aborted) return
+
+            // Push observation to the agent
+            const result = await runtime.onObservation({
+              conversationId,
+              message: roundMessage,
+              context,
+              collaborationMode: 'open_floor',
+            })
+
+            if (result.reply) {
+              state.responses.push({
+                agentId: profile.id,
                 agentName: profile.name,
                 content: result.reply,
                 timestamp: Date.now(),
                 relevanceScore: result.relevanceScore,
               })
+              completedAgents.add(profile.id)
+              roundReplies.push({
+                agentId: profile.id,
+                agentName: profile.name,
+                content: result.reply,
+              })
+
+              // Emit observation immediately for streaming-like UX —
+              // each agent's reply appears as soon as it finishes, not batched at the end.
+              if (!webContents.isDestroyed()) {
+                webContents.send('ai:event', {
+                  type: 'agent_observation',
+                  conversationId,
+                  agentProfileId: profile.id,
+                  agentName: profile.name,
+                  content: result.reply,
+                  timestamp: Date.now(),
+                  relevanceScore: result.relevanceScore,
+                  round,
+                })
+              }
+            } else {
+              skippedAgentsSet.add(profile.id)
             }
-          } else {
-            skippedAgentsSet.add(profile.id)
+          } finally {
+            // Clean up the runtime and remove from registry
+            await runtime.dispose().catch(() => {})
+            this.runtimes.delete(key)
           }
-        } finally {
-          // Clean up the runtime and remove from registry
-          await runtime.dispose().catch(() => {})
-          this.runtimes.delete(key)
+        } catch {
+          skippedAgentsSet.add(profile.id)
         }
-      } catch {
-        skippedAgentsSet.add(profile.id)
-      }
-    })
+      })
 
-    // Wait for responses (with timeout OR abort signal)
-    await Promise.race([
-      Promise.all(promises),
-      new Promise<void>((resolve) => {
-        const timeoutId = setTimeout(resolve, OPEN_FLOOR_TIMEOUT_MS)
-        abortController.signal.addEventListener('abort', () => {
-          clearTimeout(timeoutId)
-          resolve()
+      // Wait for responses (with timeout OR abort signal)
+      await Promise.race([
+        Promise.all(promises),
+        new Promise<void>((resolve) => {
+          const timeoutId = setTimeout(resolve, OPEN_FLOOR_TIMEOUT_MS)
+          abortController.signal.addEventListener('abort', () => {
+            clearTimeout(timeoutId)
+            resolve()
+          })
+        }),
+      ])
+
+      // Track this round's replies for next round's context injection
+      allRoundReplies.push(roundReplies)
+
+      // Natural convergence: if no agent replied this round, stop iterating
+      if (roundReplies.length === 0) {
+        writeObservabilityEvent('open_floor:round_converged', {
+          conversationId,
+          round,
+          reason: 'all_agents_silent',
         })
-      }),
-    ])
+        break
+      }
 
-    // Sync Set-based tracking back to state arrays for downstream readers
-    state.pendingAgents = profiles.map((p) => p.id).filter((id) => !completedAgents.has(id) && !skippedAgentsSet.has(id))
-    state.skippedAgents = Array.from(skippedAgentsSet)
+      // Emit round completion marker
+      if (!webContents.isDestroyed()) {
+        webContents.send('ai:event', {
+          type: 'open_floor_round_complete',
+          conversationId,
+          round,
+          replies: roundReplies.length,
+        })
+      }
+
+      writeObservabilityEvent('open_floor:round_completed', {
+        conversationId,
+        round,
+        replies: roundReplies.length,
+      })
+    }
+
+    // Sync final tracking back to state arrays for downstream readers
+    state.pendingAgents = []
+    state.skippedAgents = profiles
+      .map((p) => p.id)
+      .filter((id) => !state.responses.some((r) => r.agentId === id))
 
     // Mark closed
     state.status = 'closed'
@@ -732,6 +795,40 @@ class AgentOrchestrator {
     }
   }
 
+  /** Inject peer agent replies from previous rounds into the conversation context,
+   * so agents in later rounds can reference, refute, or supplement each other's
+   * points — enabling Slock-like group chat behavior. */
+  private injectPeerReplies(
+    baseContext: Array<{ role: string; content: string }>,
+    allRoundReplies: Array<Array<{ agentId: string; agentName: string; content: string }>>
+  ): Array<{ role: string; content: string }> {
+    if (allRoundReplies.length === 0) return baseContext
+
+    const peerMessages: Array<{ role: string; content: string }> = []
+
+    for (let r = 0; r < allRoundReplies.length; r++) {
+      const roundReplies = allRoundReplies[r]
+      if (roundReplies.length === 0) continue
+
+      if (allRoundReplies.length > 1) {
+        peerMessages.push({
+          role: 'system',
+          content: `── 第 ${r + 1} 轮讨论 ──`,
+        })
+      }
+
+      for (const reply of roundReplies) {
+        peerMessages.push({
+          role: 'assistant',
+          content: `@${reply.agentName}：${reply.content}`,
+        })
+      }
+    }
+
+    // Append peer messages after the base context
+    return [...baseContext, ...peerMessages]
+  }
+
   /** Build conversation context for open floor observation */
   private async buildConversationContext(
     conversationId: string
@@ -744,6 +841,22 @@ class AgentOrchestrator {
        LIMIT 20`
     ).all(conversationId) as Array<{ role: string; content: string }>
     return rows
+  }
+
+  /**
+   * Build the round-specific message for iterative Open Floor.
+   * Round 1 uses the raw user message; Round 2+ injects peer replies
+   * so agents can reference, refute, or supplement each other's points.
+   */
+  private buildRoundMessage(
+    userMessage: string,
+    peerReplies: Array<{ agentId: string; agentName: string; content: string }>
+  ): string {
+    if (peerReplies.length === 0) return userMessage
+    const notes = peerReplies
+      .map((r) => `@${r.agentName}: ${r.content}`)
+      .join('\n\n')
+    return `${userMessage}\n\n---\n\n同事们已经发表了观点：\n\n${notes}\n\n请基于以上观点，发表你的看法。可以同意、反驳、补充，或提出新问题。如果没新想法，回复 NO_REPLY。`
   }
 
   // ─── Layer 5: Task scheduling ─────────────────────────────────────────────

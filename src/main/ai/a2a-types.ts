@@ -1,6 +1,7 @@
 export const MAX_DELEGATION_DEPTH = 5
 export const MAX_TASKS_PER_CONVERSATION = 20
 export const OPEN_FLOOR_TIMEOUT_MS = 5 * 60 * 1000  // 5 minute discussion window
+export const OPEN_FLOOR_MAX_ROUNDS = 2  // max rounds for iterative open floor
 
 export type A2AStatus = 'pending' | 'working' | 'completed' | 'failed'
 export type ExecutionMode = 'serial' | 'parallel'

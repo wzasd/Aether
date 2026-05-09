@@ -165,35 +165,37 @@ describe('AgentOrchestrator Open Floor integration', () => {
       'open_floor'
     )
 
-    expect(runtimeInstances).toHaveLength(2)
+    // 2 rounds × 2 agents = 4 runtimes
+    expect(runtimeInstances).toHaveLength(4)
     for (const runtime of runtimeInstances) {
       expect(runtime.start).toHaveBeenCalledWith(config)
       expect(runtime.setKnownAgents).toHaveBeenCalledWith(profiles)
       expect(runtime.onObservation).toHaveBeenCalledWith(
         expect.objectContaining({
           conversationId: 'conv-open-floor',
-          message: 'brainstorm OAuth2 implementation',
           collaborationMode: 'open_floor'
         })
       )
       expect(runtime.dispose).toHaveBeenCalled()
     }
 
-    expect(webContents.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({ type: 'agent_observation', agentProfileId: 'coder' })
+    // Each agent replies in both rounds
+    const coderObservations = webContents.send.mock.calls.filter(
+      (call) => call[1]?.type === 'agent_observation' && call[1]?.agentProfileId === 'coder'
     )
-    expect(webContents.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({ type: 'agent_observation', agentProfileId: 'reviewer' })
+    const reviewerObservations = webContents.send.mock.calls.filter(
+      (call) => call[1]?.type === 'agent_observation' && call[1]?.agentProfileId === 'reviewer'
     )
+    expect(coderObservations).toHaveLength(2)
+    expect(reviewerObservations).toHaveLength(2)
+
     expect(webContents.send).toHaveBeenCalledWith(
       'ai:event',
-      expect.objectContaining({ type: 'open_floor_closed', totalResponses: 2, skippedAgents: 0 })
+      expect.objectContaining({ type: 'open_floor_closed', totalResponses: 4, skippedAgents: 0 })
     )
     expect(writeObservabilityEvent).toHaveBeenCalledWith(
       'open_floor:completed',
-      expect.objectContaining({ conversationId: 'conv-open-floor', totalResponses: 2 })
+      expect.objectContaining({ conversationId: 'conv-open-floor', totalResponses: 4 })
     )
   })
 
@@ -377,18 +379,18 @@ describe('AgentOrchestrator Open Floor integration', () => {
       })
     )
 
-    // The throwing agent should not produce a response
+    // The throwing agent should not produce a response in either round
     const coderObservations = webContents.send.mock.calls.filter(
       (call) => call[1]?.type === 'agent_observation' && call[1]?.agentProfileId === 'coder'
     )
     expect(coderObservations).toHaveLength(0)
 
-    // Closed event should show 1 response, 1 skipped
+    // Reviewer replies in both rounds; coder never replies (skipped once in final tally)
     expect(webContents.send).toHaveBeenCalledWith(
       'ai:event',
       expect.objectContaining({
         type: 'open_floor_closed',
-        totalResponses: 1,
+        totalResponses: 2,
         skippedAgents: 1,
       })
     )
@@ -438,8 +440,10 @@ describe('AgentOrchestrator Open Floor integration', () => {
     await secondOpenFloor
 
     // The first Open Floor should have been interrupted (aborted)
-    // and the second should complete normally
-    expect(runtimeInstances).toHaveLength(4) // 2 from first + 2 from second
+    // and the second should complete normally.
+    // First: 2 runtimes (Round 1 only, because agents never resolve)
+    // Second: 4 runtimes (2 rounds × 2 agents)
+    expect(runtimeInstances).toHaveLength(6) // 2 from first + 4 from second
 
     // First runtimes should have been aborted by stopOpenFloor before second started
     for (const runtime of firstRuntimes) {
