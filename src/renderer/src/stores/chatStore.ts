@@ -1673,6 +1673,35 @@ export const useChatStore = create<ChatState>((set, get) => {
           break
         }
 
+        case 'open_floor_round_start': {
+          const roundConvId = event.conversationId || state.currentConversation?.id
+          if (!roundConvId) break
+          if (state.openFloorStates[roundConvId]?.status !== 'active') break
+          // Insert a round divider message in the chat
+          if (state.currentConversation?.id === roundConvId && event.round > 1) {
+            const dividerId = `round-divider-${event.round}`
+            set((s) => {
+              if (s.currentConversation?.id !== roundConvId) return s
+              if (s.messages.some((m) => m.id === dividerId)) return s
+              const divider: Message = {
+                id: dividerId,
+                conversation_id: roundConvId,
+                role: 'system',
+                content: `── 第 ${event.round} 轮讨论 ──`,
+                thinking: null,
+                created_at: Date.now(),
+              }
+              return { ...s, messages: [...s.messages, divider] }
+            })
+          }
+          break
+        }
+
+        case 'open_floor_round_complete': {
+          // Round completed — no special action needed; replies already rendered
+          break
+        }
+
         case 'open_floor_closed': {
           const closedConvId = event.conversationId || state.currentConversation?.id
           if (!closedConvId) break

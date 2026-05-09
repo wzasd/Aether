@@ -56,6 +56,8 @@ export type ObservabilityEventName =
   | 'intent:dispatched'
   | 'open_floor:completed'
   | 'open_floor:stopped'
+  | 'open_floor:round_converged'
+  | 'open_floor:round_completed'
 
 export interface ObservabilityEventPayload {
   conversationId?: string
