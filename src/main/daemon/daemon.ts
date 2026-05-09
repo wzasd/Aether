@@ -171,6 +171,8 @@ export class Daemon {
     if (!this.running || !this.abortController) return
     if (this.abortController.signal.aborted) return
 
+    let anyTaskExecuted = false
+
     for (const resident of runtimeRegistry.getAllActive()) {
       // Check if this agent has capacity and pending tasks
       const pendingCount = taskQueue.countPending(resident.profile.id)
@@ -179,8 +181,48 @@ export class Daemon {
       const activeCount = resident.claimedTasks.size
       if (activeCount >= resident.maxConcurrentTasks) continue
 
-      // Claim and execute
-      await runtimeRegistry.claimAndExecute(resident.profile.id)
+      // Claim and execute (non-blocking)
+      anyTaskExecuted = true
+      runtimeRegistry.claimAndExecute(resident.profile.id).catch((err) => {
+        console.error('[Daemon] claimAndExecute error:', err)
+      })
+    }
+
+    // Check if all tasks for all conversations are done
+    if (anyTaskExecuted) {
+      this.checkConversationsComplete()
+    }
+  }
+
+  private checkConversationsComplete(): void {
+    // Get all unique conversation IDs with pending/claimed/running tasks
+    const activeConversations = new Set<string>()
+    for (const resident of runtimeRegistry.getAllActive()) {
+      const tasks = taskQueue.getAgentActiveTasks(resident.profile.id)
+      for (const t of tasks) {
+        activeConversations.add(t.conversationId)
+      }
+    }
+
+    // For conversations with no active tasks, emit closed event
+    for (const conversationId of activeConversations) {
+      let hasActive = false
+      for (const resident of runtimeRegistry.getAllActive()) {
+        const tasks = taskQueue.getAgentActiveTasks(resident.profile.id)
+        if (tasks.some((t) => t.conversationId === conversationId)) {
+          hasActive = true
+          break
+        }
+      }
+      if (!hasActive) {
+        bus.publish({
+          type: 'open_floor:closed',
+          conversationId,
+          actorType: 'system',
+          actorId: null,
+          payload: { reason: 'all_tasks_complete' },
+        })
+      }
     }
   }
 

@@ -196,7 +196,7 @@ class AgentOrchestrator {
       this.openFloorStates.set(conversationId, state)
 
       // Subscribe to agent replies via EventBus for state tracking
-      const handler = (event: { type: string; conversationId: string; actorType: string; actorId: string | null; payload: unknown }): void => {
+      const replyHandler = (event: { type: string; conversationId: string; actorType: string; actorId: string | null; payload: unknown }): void => {
         if (event.type !== 'message:reply' || event.conversationId !== conversationId) return
         const payload = event.payload as { content: string; agentName: string; relevanceScore: number }
         state.responses.push({
@@ -219,30 +219,25 @@ class AgentOrchestrator {
           })
         }
       }
-      bus.subscribe('message:reply', handler)
+      bus.subscribe('message:reply', replyHandler)
 
-      // Listen for completion (when no agents have pending tasks)
-      const checkComplete = setInterval(() => {
-        const tasks = this.loadAllEnabledProfiles().map((p) => {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const { taskQueue } = require('../daemon/task-queue')
-          return taskQueue.countPending(p.id)
-        })
-        if (tasks.every((count) => count === 0)) {
-          clearInterval(checkComplete)
-          bus.unsubscribe('message:reply', handler)
-          state.status = 'closed'
-          state.endTime = Date.now()
-          if (!webContents.isDestroyed()) {
-            webContents.send('ai:event', {
-              type: 'open_floor_closed',
-              conversationId,
-              totalResponses: state.responses.length,
-              skippedAgents: state.skippedAgents.length,
-            })
-          }
+      // Listen for open_floor completion via EventBus
+      const completeHandler = (event: { type: string; conversationId: string; actorType: string; actorId: string | null; payload: unknown }): void => {
+        if (event.type !== 'open_floor:closed' || event.conversationId !== conversationId) return
+        bus.unsubscribe('message:reply', replyHandler)
+        bus.unsubscribe('open_floor:closed', completeHandler)
+        state.status = 'closed'
+        state.endTime = Date.now()
+        if (!webContents.isDestroyed()) {
+          webContents.send('ai:event', {
+            type: 'open_floor_closed',
+            conversationId,
+            totalResponses: state.responses.length,
+            skippedAgents: state.skippedAgents.length,
+          })
         }
-      }, 1000)
+      }
+      bus.subscribe('open_floor:closed', completeHandler)
 
       return
     }
