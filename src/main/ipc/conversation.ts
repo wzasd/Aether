@@ -178,18 +178,23 @@ export function registerConversationIpc(): void {
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, data.conversation_id)
     
     // Emit event for event-driven agent trigger (Phase 2)
-    bus.publish({
-      type: 'message:new',
-      conversationId: data.conversation_id,
-      actorType: data.role === 'user' ? 'user' : 'agent',
-      actorId: data.agent_profile_id ?? null,
-      payload: {
-        messageId: id,
-        role: data.role,
-        content: data.content,
-        agentProfileId: data.agent_profile_id ?? null,
-      },
-    })
+    // CRITICAL: Only publish message:new for user messages.
+    // Agent replies are already notified via message:reply in claimAndExecute.
+    // Publishing message:new for agent replies causes infinite loop:
+    // Agent reply → message:create → message:new → all agents enqueue → reply → repeat
+    if (data.role === 'user') {
+      bus.publish({
+        type: 'message:new',
+        conversationId: data.conversation_id,
+        actorType: 'user',
+        actorId: null,
+        payload: {
+          messageId: id,
+          role: data.role,
+          content: data.content,
+        },
+      })
+    }
     
     return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message
   })

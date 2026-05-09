@@ -157,6 +157,16 @@ export class RuntimeRegistry {
     resident.isProcessing = true // Aligns with Slock: mark as busy
     taskQueue.start(task.id)
 
+    // Re-check: task may have been cancelled between claim and start
+    const currentTasks = taskQueue.getConversationTasks(task.conversationId)
+    const currentTask = currentTasks.find((t) => t.id === task.id)
+    if (!currentTask || currentTask.status === 'cancelled') {
+      resident.claimedTasks.delete(task.id)
+      resident.isProcessing = false
+      console.debug('[RuntimeRegistry] task was cancelled before execution:', task.id)
+      return
+    }
+
     // Notify frontend that this agent has started thinking
     bus.publish({
       type: 'agent:thinking',
@@ -193,10 +203,19 @@ export class RuntimeRegistry {
       // Only start a new session if the runtime is not already active.
       if (!resident.runtime.isActive && this.config) {
         const lastSessionId = task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId)
-        const resumeConfig = lastSessionId
-          ? { ...this.config, sessionId: lastSessionId }
-          : this.config
-        await resident.runtime.start(resumeConfig)
+        try {
+          const resumeConfig = lastSessionId
+            ? { ...this.config, sessionId: lastSessionId }
+            : this.config
+          await resident.runtime.start(resumeConfig)
+        } catch (resumeErr) {
+          // Session resume failed — fallback to a fresh session
+          console.warn(
+            '[RuntimeRegistry] session resume failed for', resident.profile.name,
+            ', falling back to fresh session:', resumeErr
+          )
+          await resident.runtime.start(this.config)
+        }
       }
 
       const result = await resident.runtime.onObservation({
@@ -244,12 +263,41 @@ export class RuntimeRegistry {
     }
   }
 
-  /** Dequeue pending messages for an idle agent (aligns with Slock: while busy → queue) */
+  /** Dequeue ONE pending message for an idle agent (aligns with Slock: while busy → queue).
+   *  After dequeuing, trigger claimAndExecute (wakeup) only if agent is still idle.
+   *  CRITICAL: Only dequeue 1 message per call to prevent task pileup and race conditions.
+   *  The finally block in claimAndExecute will call this again after the task completes,
+   *  creating a safe sequential dequeue loop.
+   *  Stale messages (agent already hit MAX_RESPONSES for that conversation) are discarded. */
   private dequeuePending(resident: ResidentRuntime): void {
-    while (resident.pendingMessages.length > 0 && !resident.isProcessing) {
+    if (resident.isProcessing || !resident.isActive) return
+
+    // Find the next valid pending message (skip stale ones)
+    while (resident.pendingMessages.length > 0) {
       const pending = resident.pendingMessages.shift()!
+
+      // Check if agent has already maxed out responses for this conversation
+      const convCounts = this.responseCounts.get(pending.params.conversationId) ?? new Map()
+      const count = convCounts.get(resident.profile.id) ?? 0
+      if (count >= this.MAX_RESPONSES_PER_AGENT) {
+        console.debug('[RuntimeRegistry] discarding stale pending for:', resident.profile.name, '(conv:', pending.params.conversationId, ', responses:', count, ')')
+        continue // Discard and check next
+      }
+
+      // Valid message — enqueue exactly ONE
       taskQueue.enqueue(pending.params)
-      console.debug('[RuntimeRegistry] dequeued pending message for:', resident.profile.name, '(queue:', resident.pendingMessages.length, ')')
+      console.debug('[RuntimeRegistry] dequeued 1 pending message for:', resident.profile.name, '(remaining:', resident.pendingMessages.length, ')')
+      break
+    }
+
+    // Wakeup: trigger immediate claim instead of waiting for pollTasks
+    if (!resident.isProcessing && resident.isActive) {
+      const pendingCount = taskQueue.countPending(resident.profile.id)
+      if (pendingCount > 0) {
+        this.claimAndExecute(resident.profile.id).catch((err) => {
+          console.error('[RuntimeRegistry] wakeup claimAndExecute error:', err)
+        })
+      }
     }
   }
 
@@ -303,10 +351,26 @@ export class RuntimeRegistry {
     this.lastResponseTime.set(conversationId, convCooldowns)
   }
 
-  /** Reset tracking for a conversation (called on abort/complete) */
+  /** Reset tracking for a conversation (called on abort/complete/new conversation).
+   *  Also clears pendingMessages for this conversation across all agents
+   *  to prevent stale messages from leaking into new conversations. */
   resetConversationTracking(conversationId: string): void {
     this.responseCounts.delete(conversationId)
     this.lastResponseTime.delete(conversationId)
+
+    // Clear pending messages for this conversation from all agents
+    for (const resident of Array.from(this.runtimes.values())) {
+      const before = resident.pendingMessages.length
+      resident.pendingMessages = resident.pendingMessages.filter(
+        (pm) => pm.params.conversationId !== conversationId
+      )
+      if (resident.pendingMessages.length < before) {
+        console.debug(
+          '[RuntimeRegistry] cleared', before - resident.pendingMessages.length,
+          'pending messages for conversation', conversationId, 'from', resident.profile.name
+        )
+      }
+    }
   }
 
   /** Reset all tracking state (used in tests for isolation) */
@@ -341,6 +405,10 @@ export class RuntimeRegistry {
       }
     } else {
       taskQueue.enqueue(params)
+      // Wakeup: trigger immediate claim instead of waiting for pollTasks
+      this.claimAndExecute(resident.profile.id).catch((err) => {
+        console.error('[RuntimeRegistry] wakeup claimAndExecute error:', err)
+      })
     }
   }
 
@@ -352,10 +420,23 @@ export class RuntimeRegistry {
 
   private onAbort(resident: ResidentRuntime, event: BusEvent): void {
     if (!resident.isActive) return
-    // Cancel pending tasks for this conversation
-    taskQueue.cancelPending(event.conversationId)
+
+    // Cancel all tasks for this conversation (pending + claimed + running)
+    taskQueue.cancelConversation(event.conversationId)
+
     // Abort active runtime if working on this conversation
-    resident.runtime.abort()
+    const activeTasks = taskQueue.getAgentActiveTasks(resident.profile.id)
+    const hasConversationTask = activeTasks.some((t) => t.conversationId === event.conversationId)
+    if (hasConversationTask) {
+      resident.runtime.abort()
+      resident.isProcessing = false
+    }
+
+    // Clear pending messages for this conversation
+    resident.pendingMessages = resident.pendingMessages.filter(
+      (pm) => pm.params.conversationId !== event.conversationId
+    )
+
     // Reset tracking for this conversation
     this.resetConversationTracking(event.conversationId)
   }
