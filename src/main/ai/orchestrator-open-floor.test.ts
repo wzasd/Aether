@@ -3,17 +3,8 @@ import type { AgentProfile } from './a2a-types'
 import type { SessionConfig } from './provider'
 
 // ─── Mock Daemon ───────────────────────────────────────────────────────────
-const mockDaemon = {
-  isRunning: vi.fn(() => false),
-  initialize: vi.fn(async () => {}),
-  start: vi.fn(async () => {}),
-  stop: vi.fn(async () => {}),
-  onUserMessage: vi.fn(async () => {}),
-  abortConversation: vi.fn(),
-}
-
-vi.mock('../daemon/daemon', () => ({
-  daemon: {
+const { mockDaemon } = vi.hoisted(() => ({
+  mockDaemon: {
     isRunning: vi.fn(() => false),
     initialize: vi.fn(async () => {}),
     start: vi.fn(async () => {}),
@@ -23,60 +14,32 @@ vi.mock('../daemon/daemon', () => ({
   },
 }))
 
+vi.mock('../daemon/daemon', () => ({
+  daemon: mockDaemon,
+}))
+
 // ─── Mock EventBus ─────────────────────────────────────────────────────────
-class MockBus {
-  private handlers = new Map<string, Array<(e: unknown) => void>>()
-
-  subscribe(type: string, handler: (e: unknown) => void): void {
-    const list = this.handlers.get(type) ?? []
-    list.push(handler)
-    this.handlers.set(type, list)
-  }
-
-  unsubscribe(type: string, handler: (e: unknown) => void): void {
-    const list = this.handlers.get(type)
-    if (!list) return
-    const idx = list.indexOf(handler)
-    if (idx >= 0) list.splice(idx, 1)
-  }
-
-  publish(event: { type: string }): void {
-    const list = this.handlers.get(event.type) ?? []
-    for (const h of list) h(event)
-  }
-
-  clear(): void {
-    this.handlers.clear()
-  }
-
-  getHandlerCount(type: string): number {
-    return this.handlers.get(type)?.length ?? 0
-  }
-}
-
-const mockBus = new MockBus()
-
-vi.mock('../daemon/event-bus', () => {
+const { mockBus } = vi.hoisted(() => {
   class MockBus {
     private handlers = new Map<string, Array<(e: unknown) => void>>()
 
-    subscribe(type: string, handler: (e: unknown) => void): void {
+    subscribe = vi.fn((type: string, handler: (e: unknown) => void): void => {
       const list = this.handlers.get(type) ?? []
       list.push(handler)
       this.handlers.set(type, list)
-    }
+    })
 
-    unsubscribe(type: string, handler: (e: unknown) => void): void {
+    unsubscribe = vi.fn((type: string, handler: (e: unknown) => void): void => {
       const list = this.handlers.get(type)
       if (!list) return
       const idx = list.indexOf(handler)
       if (idx >= 0) list.splice(idx, 1)
-    }
+    })
 
-    publish(event: { type: string }): void {
+    publish = vi.fn((event: { type: string }): void => {
       const list = this.handlers.get(event.type) ?? []
       for (const h of list) h(event)
-    }
+    })
 
     clear(): void {
       this.handlers.clear()
@@ -87,8 +50,12 @@ vi.mock('../daemon/event-bus', () => {
     }
   }
 
-  return { bus: new MockBus() }
+  return { mockBus: new MockBus() }
 })
+
+vi.mock('../daemon/event-bus', () => ({
+  bus: mockBus,
+}))
 
 // ─── Mock DB & Logging ─────────────────────────────────────────────────────
 vi.mock('../core/db', () => ({

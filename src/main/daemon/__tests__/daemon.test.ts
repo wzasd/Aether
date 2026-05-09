@@ -17,15 +17,7 @@ vi.mock('../../ai/agent-runtime', () => ({
   })),
 }))
 
-vi.mock('../../core/db', () => ({
-  getDb: vi.fn(() => ({
-    prepare: vi.fn(() => ({
-      run: vi.fn(() => ({ changes: 1 })),
-      get: vi.fn(() => ({ count: 0 })),
-      all: vi.fn(() => []),
-    })),
-  })),
-}))
+vi.mock('../../core/db')
 
 vi.mock('../../core/logging', () => ({
   writeObservabilityEvent: vi.fn(),
@@ -34,6 +26,7 @@ vi.mock('../../core/logging', () => ({
 import { Daemon } from '../daemon'
 import { bus } from '../event-bus'
 import { taskQueue } from '../task-queue'
+import { resetMockDb } from '../../core/__mocks__/db'
 
 const profiles: AgentProfile[] = [
   {
@@ -86,6 +79,7 @@ describe('Daemon', () => {
     mockObservations.clear()
     bus.clear()
     vi.clearAllMocks()
+    resetMockDb()
   })
 
   afterEach(async () => {

@@ -17,13 +17,234 @@ vi.mock('../../ai/agent-runtime', () => ({
   })),
 }))
 
+// In-memory mock DB that actually tracks state
+const mockDbState: {
+  tables: Map<string, Array<Record<string, unknown>>>
+  sequences: Map<string, number>
+} = {
+  tables: new Map(),
+  sequences: new Map(),
+}
+
+function resetMockDb(): void {
+  mockDbState.tables.clear()
+  mockDbState.sequences.clear()
+}
+
+function mockPrepare(sql: string) {
+  const lower = sql.toLowerCase()
+  
+  return {
+    run: vi.fn((...args: unknown[]) => {
+      if (lower.includes('insert into')) {
+        const tableMatch = lower.match(/insert into\s+(\w+)/)
+        const table = tableMatch ? tableMatch[1] : 'unknown'
+        const row: Record<string, unknown> = {}
+        
+        // Simple parameter binding: ? placeholders
+        let argIdx = 0
+        const colMatch = lower.match(/\(([^)]+)\)/)
+        if (colMatch) {
+          const cols = colMatch[1].split(',').map(c => c.trim())
+          cols.forEach((col, i) => {
+            if (col !== '?' && i < args.length) {
+              row[col] = args[i]
+            }
+          })
+        }
+        
+        const rows = mockDbState.tables.get(table) ?? []
+        rows.push(row)
+        mockDbState.tables.set(table, rows)
+        return { changes: 1, lastInsertRowid: rows.length }
+      }
+      
+      if (lower.includes('update')) {
+        const tableMatch = lower.match(/update\s+(\w+)/)
+        const table = tableMatch ? tableMatch[1] : 'unknown'
+        const rows = mockDbState.tables.get(table) ?? []
+        
+        // Parse SET clauses
+        const setMatch = lower.match(/set\s+(.+?)(?:where|returning|$)/)
+        const updates: Record<string, unknown> = {}
+        if (setMatch) {
+          const setParts = setMatch[1].split(',')
+          setParts.forEach((part, idx) => {
+            const colMatch = part.match(/(\w+)\s*=\s*\?/)
+            if (colMatch && idx < args.length) {
+              updates[colMatch[1]] = args[idx]
+            }
+          })
+        }
+        
+        // Find and update matching rows
+        let updatedCount = 0
+        let updatedRow: Record<string, unknown> | null = null
+        
+        for (const row of rows) {
+          let matches = true
+          
+          // Simple WHERE parsing for common patterns
+          if (lower.includes('where')) {
+            if (lower.includes('id = ?')) {
+              const idIdx = setMatch ? setMatch[1].split(',').length : 0
+              matches = row['id'] === args[idIdx]
+            }
+            if (lower.includes('agent_profile_id = ?')) {
+              const idx = setMatch ? setMatch[1].split(',').length : 0
+              matches = row['agent_profile_id'] === args[idx]
+            }
+          }
+          
+          if (matches) {
+            Object.assign(row, updates)
+            updatedCount++
+            updatedRow = row
+          }
+        }
+        
+        // Handle RETURNING
+        if (lower.includes('returning')) {
+          return updatedRow ?? undefined
+        }
+        
+        return { changes: updatedCount }
+      }
+      
+      if (lower.includes('delete')) {
+        const tableMatch = lower.match(/from\s+(\w+)/)
+        const table = tableMatch ? tableMatch[1] : 'unknown'
+        mockDbState.tables.set(table, [])
+        return { changes: 0 }
+      }
+      
+      return { changes: 0 }
+    }),
+    
+    get: vi.fn((...args: unknown[]) => {
+      // Handle UPDATE ... RETURNING * (SQLite claim pattern)
+      if (lower.includes('update') && lower.includes('returning')) {
+        const agentMatch = lower.match(/agent_profile_id\s*=\s*\?/)
+        if (agentMatch) {
+          const table = 'agent_task_queue'
+          const agentId = args[args.length - 1] as string
+          const rows = mockDbState.tables.get(table) ?? []
+          const pending = rows.filter((r) =>
+            r['agent_profile_id'] === agentId && r['status'] === 'pending'
+          ).sort((a, b) => (a['created_at'] as number) - (b['created_at'] as number))
+          const target = pending[0]
+          if (target) {
+            target['status'] = 'claimed'
+            const claimedAt = args.find((a) => typeof a === 'number')
+            if (claimedAt) target['claimed_at'] = claimedAt
+            return target
+          }
+        }
+        return undefined
+      }
+
+      if (lower.includes('count(*)')) {
+        const tableMatch = lower.match(/from\s+(\w+)/)
+        const table = tableMatch ? tableMatch[1] : 'unknown'
+        const rows = mockDbState.tables.get(table) ?? []
+        
+        // Simple WHERE matching
+        let count = rows.length
+        if (lower.includes('where')) {
+          count = rows.filter(row => {
+            // Very basic filtering for common patterns
+            if (lower.includes('agent_profile_id = ?') && args[0] !== undefined) {
+              return row['agent_profile_id'] === args[0]
+            }
+            if (lower.includes('conversation_id = ?') && args[0] !== undefined) {
+              return row['conversation_id'] === args[0]
+            }
+            if (lower.includes('status = ?') && args[0] !== undefined) {
+              return row['status'] === args[0]
+            }
+            if (lower.includes('id = ?') && args[0] !== undefined) {
+              return row['id'] === args[0]
+            }
+            return true
+          }).length
+        }
+        return { count }
+      }
+      
+      // Single row select
+      const tableMatch = lower.match(/from\s+(\w+)/)
+      const table = tableMatch ? tableMatch[1] : 'unknown'
+      const rows = mockDbState.tables.get(table) ?? []
+      
+      // Find matching row
+      for (const row of rows) {
+        if (lower.includes('id = ?') && args[0] !== undefined && row['id'] === args[0]) {
+          return row
+        }
+        if (lower.includes('agent_profile_id = ?') && args[0] !== undefined && row['agent_profile_id'] === args[0]) {
+          return row
+        }
+      }
+      return undefined
+    }),
+    
+    all: vi.fn((...args: unknown[]) => {
+      const tableMatch = lower.match(/from\s+(\w+)/)
+      const table = tableMatch ? tableMatch[1] : 'unknown'
+      let rows = mockDbState.tables.get(table) ?? []
+      
+      // Apply simple WHERE filtering
+      if (lower.includes('where')) {
+        rows = rows.filter(row => {
+          if (lower.includes('conversation_id = ?') && args[0] !== undefined) {
+            return row['conversation_id'] === args[0]
+          }
+          if (lower.includes('agent_profile_id = ?') && args[0] !== undefined) {
+            return row['agent_profile_id'] === args[0]
+          }
+          if (lower.includes('status = ?') && args[0] !== undefined) {
+            return row['status'] === args[0]
+          }
+          if (lower.includes('status in') && args[0] !== undefined) {
+            const statuses = (args[0] as string).split(',').map(s => s.trim().replace(/'/g, ''))
+            return statuses.includes(row['status'] as string)
+          }
+          return true
+        })
+      }
+      
+      // Apply ORDER BY
+      if (lower.includes('order by')) {
+        const orderMatch = lower.match(/order by\s+(\w+)/)
+        if (orderMatch) {
+          const col = orderMatch[1]
+          rows = [...rows].sort((a, b) => {
+            const aVal = a[col] as number | string | undefined
+            const bVal = b[col] as number | string | undefined
+            if (typeof aVal === 'number' && typeof bVal === 'number') {
+              return aVal - bVal
+            }
+            return String(aVal).localeCompare(String(bVal))
+          })
+        }
+      }
+      
+      // Apply LIMIT
+      if (lower.includes('limit')) {
+        const limitMatch = lower.match(/limit\s+(\d+)/)
+        if (limitMatch) {
+          rows = rows.slice(0, parseInt(limitMatch[1]))
+        }
+      }
+      
+      return rows
+    }),
+  }
+}
+
 vi.mock('../../core/db', () => ({
   getDb: vi.fn(() => ({
-    prepare: vi.fn(() => ({
-      run: vi.fn(() => ({ changes: 1 })),
-      get: vi.fn(() => ({ count: 0 })),
-      all: vi.fn(() => []),
-    })),
+    prepare: vi.fn((sql: string) => mockPrepare(sql)),
   })),
 }))
 
@@ -34,6 +255,7 @@ vi.mock('../../core/logging', () => ({
 import { RuntimeRegistry } from '../runtime-registry'
 import { bus } from '../event-bus'
 import { taskQueue } from '../task-queue'
+import { resetMockDb } from '../../core/__mocks__/db'
 
 const profiles: AgentProfile[] = [
   {
@@ -78,6 +300,7 @@ describe('RuntimeRegistry', () => {
     registry = new RuntimeRegistry()
     mockObservations.clear()
     bus.clear()
+    resetMockDb()
     // Clear task queue table — our mock db is fresh per module import,
     // but let's also clear bus subscribers that registry may have added
   })
