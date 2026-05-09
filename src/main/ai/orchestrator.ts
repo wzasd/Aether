@@ -16,6 +16,8 @@ import { ContinuityCapsuleManager, formatContinuationPrompt } from './continuity
 import { ReflowOrchestrator } from './reflow-orchestrator'
 import { A2AMemoryDistiller } from './a2a-memory-distiller'
 import { writeObservabilityEvent } from '../core/logging'
+import { daemon } from '../daemon/daemon'
+import { bus } from '../daemon/event-bus'
 
 // Layer 1
 import { parseIntents } from './intent-parser'
@@ -157,17 +159,91 @@ class AgentOrchestrator {
       ?? 'orchestrated'
     this.conversationModes.set(conversationId, mode)
 
-    // Open Floor branch: broadcast to all team agents, skip normal pipeline
+    // Open Floor branch: use Daemon (bytro 2.0 architecture)
     if (mode === 'open_floor') {
-      // Stop any active Open Floor for this conversation before starting a new round.
-      // Without this, the old state/runtimes leak and the new executeOpenFloor
-      // overwrites the AbortController, making the previous round unstoppable.
+      // Initialize daemon on first open_floor use
+      if (!daemon.isRunning()) {
+        const profiles = teamId
+          ? this.loadTeamMemberProfiles(teamId)
+          : this.loadAllEnabledProfiles()
+        await daemon.initialize(profiles, sessionConfig, webContents)
+        await daemon.start()
+      }
+
+      // Stop any previous discussion for this conversation
       const prevState = this.openFloorStates.get(conversationId)
       if (prevState?.status === 'active') {
-        this.stopOpenFloor(conversationId)
+        daemon.abortConversation(conversationId)
       }
+
       this.baseConfigs.set(conversationId, sessionConfig)
-      await this.executeOpenFloor(conversationId, content, webContents)
+
+      // Build conversation context
+      const context = await this.buildConversationContext(conversationId)
+
+      // Route through daemon (event-driven)
+      await daemon.onUserMessage(conversationId, content, context)
+
+      // Track state for UI compatibility
+      const state: OpenFloorState = {
+        conversationId,
+        status: 'active',
+        startTime: Date.now(),
+        responses: [],
+        pendingAgents: this.loadAllEnabledProfiles().map((p) => p.id),
+        skippedAgents: [],
+      }
+      this.openFloorStates.set(conversationId, state)
+
+      // Subscribe to agent replies via EventBus for state tracking
+      const handler = (event: { type: string; conversationId: string; actorType: string; actorId: string | null; payload: unknown }): void => {
+        if (event.type !== 'message:reply' || event.conversationId !== conversationId) return
+        const payload = event.payload as { content: string; agentName: string; relevanceScore: number }
+        state.responses.push({
+          agentId: event.actorId ?? 'unknown',
+          agentName: payload.agentName,
+          content: payload.content,
+          timestamp: Date.now(),
+          relevanceScore: payload.relevanceScore ?? 0,
+        })
+        // Forward to frontend
+        if (!webContents.isDestroyed()) {
+          webContents.send('ai:event', {
+            type: 'agent_observation',
+            conversationId,
+            agentProfileId: event.actorId,
+            agentName: payload.agentName,
+            content: payload.content,
+            timestamp: Date.now(),
+            relevanceScore: payload.relevanceScore ?? 0,
+          })
+        }
+      }
+      bus.subscribe('message:reply', handler)
+
+      // Listen for completion (when no agents have pending tasks)
+      const checkComplete = setInterval(() => {
+        const tasks = this.loadAllEnabledProfiles().map((p) => {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { taskQueue } = require('../daemon/task-queue')
+          return taskQueue.countPending(p.id)
+        })
+        if (tasks.every((count) => count === 0)) {
+          clearInterval(checkComplete)
+          bus.unsubscribe('message:reply', handler)
+          state.status = 'closed'
+          state.endTime = Date.now()
+          if (!webContents.isDestroyed()) {
+            webContents.send('ai:event', {
+              type: 'open_floor_closed',
+              conversationId,
+              totalResponses: state.responses.length,
+              skippedAgents: state.skippedAgents.length,
+            })
+          }
+        }
+      }, 1000)
+
       return
     }
 
