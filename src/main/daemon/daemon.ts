@@ -40,6 +40,7 @@ export class Daemon {
   private abortController: AbortController | null = null
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
+  private trackedConversations = new Set<string>()
 
   constructor(config: Partial<DaemonConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config }
@@ -189,26 +190,12 @@ export class Daemon {
   }
 
   private checkConversationsComplete(): void {
-    // Get all unique conversation IDs with pending/claimed/running tasks
-    const activeConversations = new Set<string>()
-    for (const resident of runtimeRegistry.getAllActive()) {
-      const tasks = taskQueue.getAgentActiveTasks(resident.profile.id)
-      for (const t of tasks) {
-        activeConversations.add(t.conversationId)
-      }
-    }
-
-    // For conversations with no active tasks, emit closed event
-    for (const conversationId of activeConversations) {
-      let hasActive = false
-      for (const resident of runtimeRegistry.getAllActive()) {
-        const tasks = taskQueue.getAgentActiveTasks(resident.profile.id)
-        if (tasks.some((t) => t.conversationId === conversationId)) {
-          hasActive = true
-          break
-        }
-      }
-      if (!hasActive) {
+    for (const conversationId of Array.from(this.trackedConversations)) {
+      const allTasks = taskQueue.getConversationTasks(conversationId)
+      const hasActiveOrPending = allTasks.some((t) =>
+        t.status === 'pending' || t.status === 'claimed' || t.status === 'running'
+      )
+      if (!hasActiveOrPending && allTasks.length > 0) {
         bus.publish({
           type: 'open_floor:closed',
           conversationId,
@@ -216,6 +203,7 @@ export class Daemon {
           actorId: null,
           payload: { reason: 'all_tasks_complete' },
         })
+        this.trackedConversations.delete(conversationId)
       }
     }
   }

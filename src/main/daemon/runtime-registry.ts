@@ -59,7 +59,7 @@ export class RuntimeRegistry {
   async startAll(): Promise<void> {
     if (!this.config) throw new Error('RuntimeRegistry not initialized')
 
-    for (const [profileId, resident] of this.runtimes) {
+    for (const [profileId, resident] of Array.from(this.runtimes.entries())) {
       try {
         await resident.runtime.start(this.config)
         resident.isActive = true
@@ -73,7 +73,7 @@ export class RuntimeRegistry {
 
   /** Stop all resident runtimes */
   async stopAll(): Promise<void> {
-    for (const [profileId, resident] of this.runtimes) {
+    for (const [profileId, resident] of Array.from(this.runtimes.entries())) {
       if (resident.isActive) {
         try {
           await resident.runtime.dispose()
