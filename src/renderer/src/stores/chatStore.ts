@@ -1603,7 +1603,7 @@ export const useChatStore = create<ChatState>((set, get) => {
             flushSync(() => {
               set((s) => {
                 if (s.currentConversation?.id !== thinkingConvId) return s
-                const placeholderId = `thinking-${event.agentProfileId}`
+                const placeholderId = `thinking-${event.agentProfileId}-r${event.round ?? 1}`
                 // Avoid duplicate placeholders if agent_thinking is received twice
                 if (s.messages.some((m) => m.id === placeholderId)) return s
                 const placeholder: Message = {
@@ -1647,7 +1647,7 @@ export const useChatStore = create<ChatState>((set, get) => {
               content: `**${event.agentName}**\n\n${event.content}`,
               agent_profile_id: event.agentProfileId
             }).then((message) => {
-              const placeholderId = `thinking-${event.agentProfileId}`
+              const placeholderId = `thinking-${event.agentProfileId}-r${event.round ?? 1}`
               // flushSync forces React to render this message immediately,
               // bypassing React 18's automatic batching. Without this, 6 agents
               // completing within ~1s would all render in a single batch —
