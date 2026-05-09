@@ -463,7 +463,7 @@ describe('RuntimeRegistry', () => {
     )
   })
 
-  it('enqueues follow-up tasks when other agents reply', async () => {
+  it('does NOT enqueue follow-up tasks on peer replies (pull model)', async () => {
     await registry.initialize(profiles, config)
     await registry.startAll()
 
@@ -479,9 +479,10 @@ describe('RuntimeRegistry', () => {
       },
     })
 
-    // Coder should have a follow-up task enqueued
+    // Phase A pull model: onMessageReply must NOT enqueue follow-up tasks.
+    // Agents self-fetch peer context via readMessages tool in claimAndExecute.
     const pending = taskQueue.countPending('coder')
-    expect(pending).toBeGreaterThanOrEqual(1)
+    expect(pending).toBe(0)
   })
 
   it('does not enqueue follow-up for own replies', async () => {

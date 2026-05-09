@@ -271,27 +271,10 @@ export class RuntimeRegistry {
     })
   }
 
-  private onMessageReply(resident: ResidentRuntime, event: BusEvent): void {
-    if (!this.shouldRespond(resident, event)) return
-
-    const payload = event.payload as { content: string; agentName: string }
-
-    // Build a follow-up task with invitation-style prompt
-    const followUpMessage = [
-      `## New reply from ${payload.agentName}`,
-      '',
-      payload.content,
-      '',
-      '---',
-      '',
-      'You are participating in an open discussion. If you have something to add, disagree with, or want to build upon the above, feel free to share your perspective. If you have nothing to add, respond with NO_REPLY.',
-    ].join('\n')
-
-    taskQueue.enqueue({
-      conversationId: event.conversationId,
-      agentProfileId: resident.profile.id,
-      message: followUpMessage,
-    })
+  private onMessageReply(_resident: ResidentRuntime, _event: BusEvent): void {
+    // Phase A pull model: do NOT enqueue follow-up tasks on peer replies.
+    // Agents self-fetch peer context via the readMessages tool in claimAndExecute.
+    // The old enqueue loop caused 11+ replies and task pileup (pending: 31).
   }
 
   private onAbort(resident: ResidentRuntime, event: BusEvent): void {
