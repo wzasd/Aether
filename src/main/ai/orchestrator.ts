@@ -29,6 +29,7 @@ import { checkIntent, checkTeamMembership, checkLoopDetection } from './policy-g
 import { planRouting } from './routing-planner'
 // Layer 4
 import { assembleContext } from './context-assembler'
+import { buildConversationContext as buildConversationContextWithLabels } from './context-selector'
 
 function defaultProfile(model: string): AgentProfile {
   return {
@@ -789,6 +790,7 @@ class AgentOrchestrator {
             if (state.status !== 'active' || abortController.signal.aborted) return
 
             // Build readMessages tool — aligns with runtime-registry.ts claimAndExecute()
+            // Uses context-selector's buildConversationContext for Phase 1 label consistency
             const readMessagesTool: ObservationTool = {
               name: 'readMessages',
               description: '读取对话历史，了解最近的讨论内容和上下文。使用此工具可以帮助你做出更准确的判断和回复。',
@@ -797,11 +799,10 @@ class AgentOrchestrator {
               },
               execute: async (args: Record<string, unknown>) => {
                 const limit = Math.min(typeof args.limit === 'number' ? args.limit : 50, 100)
-                const turns = await this.buildConversationContext(conversationId)
-                const recentTurns = turns.slice(-limit)
-                return recentTurns.length > 0
-                  ? recentTurns.map((m) => `[${m.role}]: ${m.content}`).join('\n\n')
-                  : '（暂无对话历史）'
+                // Use context-selector's buildConversationContext which applies getAgentName() labels
+                const tokenBudget = limit * 100 // rough estimate: ~100 tokens per message
+                const history = buildConversationContextWithLabels(conversationId, tokenBudget)
+                return history || '（暂无对话历史）'
               },
             }
 
