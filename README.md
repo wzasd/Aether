@@ -16,7 +16,7 @@
 
 <p align="center">
   <strong>A free, open-source, Multi-Agent AI Chat IDE</strong><br>
-  <em>Built-in Agents | Auto-Detect CLI | Any API Key | Multi-Agents | Open Floor | 7 Providers | Cross-Platform</em>
+  <em>Built-in Agents | Auto-Detect CLI | Any API Key | Multi-Agents | Open Floor | 7 Providers | macOS First</em>
 </p>
 
 <p align="center">
@@ -200,7 +200,7 @@ Bytro is a **free and open-source Multi-Agent AI Chat IDE**. Unlike single-agent
 | Collaboration | None              | @mention delegation, Open Floor discussion               |
 | Model Support | 1 provider        | 7 providers — Claude, OpenCode, Gemini, Codex, and more |
 | Streaming     | Full text (mixed) | Clean text only (tool calls filtered)                    |
-| Memory        | Per-session       | Cross-session MEMORY.md in agent workspace         |
+| Memory        | Per-session       | Cross-session MEMORY.md in agent workspace              |
 | Cost          | Free / Paid       | Free & Open Source                                       |
 
 </details>
