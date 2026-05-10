@@ -34,6 +34,16 @@ export const getDb = vi.fn(() => ({
           if (idWhere) {
             const id = args[args.length - 1] as string
             const target = table.find((r) => r.id === id)
+
+            // Handle NOT IN exclusion (e.g. cancelTask: status NOT IN ('completed','failed','cancelled'))
+            const notInMatch = sql.match(/status\s+NOT\s+IN\s*\(([^)]+)\)/i)
+            if (notInMatch && target) {
+              const excludedStatuses = notInMatch[1].split(',').map((s) => s.trim().replace(/'/g, ''))
+              if (excludedStatuses.includes(target.status as string)) {
+                return { changes: 0 }
+              }
+            }
+
             if (target) {
               const hardcodedStatus = extractHardcodedStatus(sql)
               if (hardcodedStatus) target.status = hardcodedStatus
@@ -59,7 +69,8 @@ export const getDb = vi.fn(() => ({
 
           const convWhere = sql.match(/WHERE\s+conversation_id\s*=\s*\?/i)
           if (convWhere) {
-            const cid = args[0] as string
+            // Find the conversation_id argument — it's the string arg (not the number timestamps)
+            const cid = args.find((a) => typeof a === 'string') as string
             // Look for status filter ONLY in the WHERE clause
             const wherePart = sql.slice(sql.toUpperCase().indexOf('WHERE'))
             const statusMatch = wherePart.match(/status\s*=\s*'([^']+)'/)
@@ -67,7 +78,33 @@ export const getDb = vi.fn(() => ({
             let changed = 0
             for (const row of table) {
               if (row.conversation_id === cid && (!statusFilter || row.status === statusFilter)) {
-                row.status = 'cancelled'
+                const hardcodedStatus = extractHardcodedStatus(sql)
+                if (hardcodedStatus) row.status = hardcodedStatus
+                else row.status = 'cancelled'
+                if (sql.includes('completed_at = ?')) {
+                  const v = args.find((a) => typeof a === 'number')
+                  if (v) row.completed_at = v
+                }
+                changed++
+              }
+            }
+            return { changes: changed }
+          }
+
+          // Handle bare status IN filter (e.g. clearStaleTasks: WHERE status IN ('pending','claimed','running'))
+          const statusInMatch = sql.match(/WHERE\s+status\s+IN\s*\(([^)]+)\)/i)
+          if (statusInMatch) {
+            const statuses = statusInMatch[1].split(',').map((s) => s.trim().replace(/'/g, ''))
+            let changed = 0
+            for (const row of table) {
+              if (statuses.includes(row.status as string)) {
+                const hardcodedStatus = extractHardcodedStatus(sql)
+                if (hardcodedStatus) row.status = hardcodedStatus
+                else row.status = 'cancelled'
+                if (sql.includes('completed_at = ?')) {
+                  const v = args.find((a) => typeof a === 'number')
+                  if (v) row.completed_at = v
+                }
                 changed++
               }
             }

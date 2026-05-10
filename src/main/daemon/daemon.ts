@@ -16,6 +16,7 @@ import { bus } from './event-bus'
 import { taskQueue } from './task-queue'
 import { runtimeRegistry } from './runtime-registry'
 import { agentMemory, type MemoryEntry } from './agent-memory'
+import { initAgentMemory } from './init-agent-memory'
 import type { SessionConfig } from '../ai/provider'
 import type { AgentProfile } from '../ai/a2a-types'
 
@@ -66,6 +67,12 @@ export class Daemon {
     if (this.running) return
     this.running = true
     this.abortController = new AbortController()
+
+    // Clean up stale tasks from previous sessions
+    taskQueue.clearStaleTasks()
+
+    // Proactively initialize MEMORY.md for all enabled agents
+    await initAgentMemory(this.profiles)
 
     // Start all resident runtimes
     await runtimeRegistry.startAll()
@@ -121,6 +128,9 @@ export class Daemon {
     message: string,
     context: Array<{ role: string; content: string }>
   ): Promise<void> {
+    // Reset tracking for this conversation (prevents stale responseCounts from blocking)
+    runtimeRegistry.resetConversationTracking(conversationId)
+
     // Publish event to bus — RuntimeRegistry subscribers will decide
     // which agents should respond and enqueue tasks accordingly
     bus.publish({
@@ -141,19 +151,30 @@ export class Daemon {
     this.trackedConversations.add(conversationId)
   }
 
-  /** Abort all tasks for a conversation */
+  /** Abort all tasks for a conversation — cancel pending/claimed/running + abort runtimes */
   abortConversation(conversationId: string): void {
-    const cancelled = taskQueue.cancelPending(conversationId)
-    console.info('[Daemon] cancelled', cancelled, 'pending tasks for', conversationId)
+    // Cancel all tasks in TaskQueue (pending + claimed + running)
+    const cancelled = taskQueue.cancelConversation(conversationId)
+    console.info(
+      '[Daemon] cancelled tasks for', conversationId,
+      ':', cancelled.pending, 'pending,', cancelled.claimed, 'claimed,', cancelled.running, 'running'
+    )
 
+    // Abort any runtimes actively processing tasks for this conversation
     for (const resident of runtimeRegistry.getAllActive()) {
-      // Only abort if this runtime has active tasks for the target conversation
       const activeTasks = taskQueue.getAgentActiveTasks(resident.profile.id)
       const hasConversationTask = activeTasks.some((t) => t.conversationId === conversationId)
       if (hasConversationTask) {
         resident.runtime.abort()
+        resident.isProcessing = false
       }
     }
+
+    // Reset tracking in RuntimeRegistry
+    runtimeRegistry.resetConversationTracking(conversationId)
+
+    // Remove from tracked conversations
+    this.trackedConversations.delete(conversationId)
 
     this.sendToRenderer('ai:event', {
       type: 'system:abort',

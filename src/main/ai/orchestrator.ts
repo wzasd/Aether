@@ -185,8 +185,8 @@ class AgentOrchestrator {
       }
 
       // Clean up leaked bus handlers from previous sendUserMessage calls.
-      // Without this, old replyHandlers remain subscribed and cause duplicate
-      // agent_observation events to be forwarded to the frontend.
+      // subscribeBus() auto-cleans same-key subscriptions, but we also need
+      // to remove the openFloorCleanups entry for the old conversation state.
       const oldCleanup = this.openFloorCleanups.get(conversationId)
       if (oldCleanup) {
         oldCleanup()
@@ -236,13 +236,14 @@ class AgentOrchestrator {
           })
         }
       }
-      bus.subscribe('message:reply', replyHandler)
+      this.subscribeBus(conversationId, 'message:reply', replyHandler)
 
       // Listen for open_floor completion via EventBus
       const completeHandler = (event: { type: string; conversationId: string; actorType: string; actorId: string | null; payload: unknown }): void => {
         if (event.type !== 'open_floor:closed' || event.conversationId !== conversationId) return
         cleanup()
         this.openFloorCleanups.delete(conversationId)
+        this.cleanupBusSubscriptions(conversationId)
         state.status = 'closed'
         state.endTime = Date.now()
         if (!webContents.isDestroyed()) {
@@ -254,12 +255,11 @@ class AgentOrchestrator {
           })
         }
       }
-      bus.subscribe('open_floor:closed', completeHandler)
+      this.subscribeBus(conversationId, 'open_floor:closed', completeHandler)
 
       // Centralized cleanup so abort/restart/complete all unsubscribe consistently.
       const cleanup = (): void => {
-        bus.unsubscribe('message:reply', replyHandler)
-        bus.unsubscribe('open_floor:closed', completeHandler)
+        this.cleanupBusSubscriptions(conversationId)
       }
       this.openFloorCleanups.set(conversationId, cleanup)
 

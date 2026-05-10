@@ -85,7 +85,21 @@ const api = {
       total_cost: number
     }>> => ipcRenderer.invoke('usage:summary', range),
     totalCost: (range?: { from?: number; to?: number }): Promise<number> =>
-      ipcRenderer.invoke('usage:totalCost', range)
+      ipcRenderer.invoke('usage:totalCost', range),
+    byProvider: (days?: number): Promise<Array<{
+      provider_id: string
+      total_input_tokens: number
+      total_output_tokens: number
+      total_cost_usd: number
+      total_calls: number
+    }>> => ipcRenderer.invoke('usage:byProvider', days ?? 7),
+    byAgent: (days?: number): Promise<Array<{
+      agent_profile_id: string
+      total_input_tokens: number
+      total_output_tokens: number
+      total_cost_usd: number
+      total_calls: number
+    }>> => ipcRenderer.invoke('usage:byAgent', days ?? 7)
   },
   todo: {
     sync: (conversationId: string, items: Array<{ content: string; completed: number; order_index: number }>) =>
@@ -121,7 +135,9 @@ const api = {
     hasApiKey: (providerId: string): Promise<boolean> =>
       ipcRenderer.invoke('provider:hasApiKey', providerId),
     testConnection: (id: string): Promise<{ ok: boolean; version: string | null }> =>
-      ipcRenderer.invoke('provider:testConnection', id)
+      ipcRenderer.invoke('provider:testConnection', id),
+    refreshModels: (providerIds?: string[]): Promise<Record<string, Array<{ id: string; name: string; contextWindow: number; maxOutputTokens?: number }>>> =>
+      ipcRenderer.invoke('provider:refreshModels', providerIds)
   },
   chat: {
     startSession: (config: {
@@ -395,6 +411,50 @@ const api = {
       ipcRenderer.invoke('mcp:removeMarketplaceUrl', url),
     resetMarketplaceUrls: (): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('mcp:resetMarketplaceUrls')
+  },
+  daemon: {
+    getStatus: (): Promise<{
+      agents: Array<{
+        profileId: string
+        name: string
+        role: string
+        providerId: string | null
+        isActive: boolean
+        isProcessing: boolean
+        pendingCount: number
+        claimedTaskCount: number
+        maxConcurrentTasks: number
+      }>
+      providerWorkload: Record<string, { running: number; queued: number }>
+      isRunning: boolean
+    }> => ipcRenderer.invoke('daemon:getStatus'),
+    getHeartbeat: (): Promise<{
+      activeRuntimes: number
+      totalPending: number
+      lastBeat: number
+    }> => ipcRenderer.invoke('daemon:getHeartbeat'),
+    getTokenUsage: (days?: number): Promise<Record<string, { inputTokens: number; outputTokens: number; totalTokens: number }>> =>
+      ipcRenderer.invoke('daemon:getTokenUsage', days),
+    getAgentActivity: (agentProfileId: string, limit?: number): Promise<{
+      recentConversations: Array<{
+        id: string
+        title: string | null
+        status: string
+        model: string | null
+        provider: string | null
+        created_at: number
+        updated_at: number
+      }>
+      taskSummary: Array<{ status: string; count: number }>
+      recentTasks: Array<{
+        id: string
+        title: string
+        status: string
+        completed_at: number | null
+        created_at: number
+        agent_status: string
+      }>
+    }> => ipcRenderer.invoke('daemon:getAgentActivity', agentProfileId, limit ?? 20),
   }
 }
 

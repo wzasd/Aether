@@ -3,10 +3,10 @@ import { getDb } from '../core/db'
 import { randomUUID } from 'crypto'
 
 export type TaskStatus = 'Idle' | 'Running' | 'Waiting' | 'Error' | 'Done'
-type TaskMode = 'build' | 'plan' | 'review' | 'ask'
+type TaskMode = 'build' | 'plan' | 'review' | 'ask' | 'open_floor' | 'orchestrated'
 
 const TASK_STATUSES = new Set<TaskStatus>(['Idle', 'Running', 'Waiting', 'Error', 'Done'])
-const TASK_MODES = new Set<TaskMode>(['build', 'plan', 'review', 'ask'])
+const TASK_MODES = new Set<TaskMode>(['build', 'plan', 'review', 'ask', 'open_floor', 'orchestrated'])
 const TASK_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   Idle: ['Idle', 'Running'],
   Running: ['Running', 'Waiting', 'Error', 'Done', 'Idle'],

@@ -15,7 +15,7 @@ import {
 const require = createRequire(import.meta.url)
 const BetterSqlite3 = require('better-sqlite3')
 
-const SCHEMA_VERSION = 26
+const SCHEMA_VERSION = 27
 
 let db: Database.Database
 
@@ -251,6 +251,12 @@ function createTables(): void {
       model TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
       description TEXT,
       system_prompt TEXT,
+      preferred_provider TEXT,
+      capabilities TEXT,
+      when_to_use TEXT,
+      output_contract TEXT,
+      custom_env TEXT,
+      custom_args TEXT,
       is_enabled INTEGER NOT NULL DEFAULT 1,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -485,6 +491,12 @@ function applyMigrations(): void {
         model TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
         description TEXT,
         system_prompt TEXT,
+        preferred_provider TEXT,
+        capabilities TEXT,
+        when_to_use TEXT,
+        output_contract TEXT,
+        custom_env TEXT,
+        custom_args TEXT,
         is_enabled INTEGER NOT NULL DEFAULT 1,
         sort_order INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),

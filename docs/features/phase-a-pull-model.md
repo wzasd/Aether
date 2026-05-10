@@ -2,7 +2,7 @@
 
 **版本**: 1.3  
 **日期**: 2026-05-09  
-**状态**: ✅ 已实现（review 通过，零阻塞项，待合并）  
+**状态**: ✅ 已合并（commit `0b2f7b0`）  
 **变更**: 
 - v1.3 — **关键转向**：从"全量注入"改为"Agent 自 fetch via tool use"
 - v1.3 — FR-2 重构：`claimAndExecute` 传入 `tools` 替代预注入 `context`

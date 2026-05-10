@@ -28,6 +28,8 @@ export function registerAgentIpc(): void {
     capabilities?: string[]
     whenToUse?: string
     outputContract?: string
+    customEnv?: Record<string, string>
+    customArgs?: string[]
     isEnabled?: boolean
     sortOrder?: number
     workspaceId?: string
@@ -37,8 +39,8 @@ export function registerAgentIpc(): void {
     const now = Math.floor(Date.now() / 1000)
 
     db.prepare(`
-      INSERT INTO agent_profile_configs (id, workspace_id, name, role, model, description, system_prompt, preferred_provider, capabilities, when_to_use, output_contract, is_enabled, sort_order, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agent_profile_configs (id, workspace_id, name, role, model, description, system_prompt, preferred_provider, capabilities, when_to_use, output_contract, custom_env, custom_args, is_enabled, sort_order, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.workspaceId ?? null,
@@ -51,6 +53,8 @@ export function registerAgentIpc(): void {
       data.capabilities ? JSON.stringify(data.capabilities) : null,
       data.whenToUse ?? null,
       data.outputContract ?? null,
+      data.customEnv ? JSON.stringify(data.customEnv) : null,
+      data.customArgs ? JSON.stringify(data.customArgs) : null,
       data.isEnabled !== false ? 1 : 0,
       data.sortOrder ?? 0,
       now,
@@ -71,6 +75,8 @@ export function registerAgentIpc(): void {
     capabilities?: string[] | null
     whenToUse?: string | null
     outputContract?: string | null
+    customEnv?: Record<string, string> | null
+    customArgs?: string[] | null
     isEnabled?: boolean
     sortOrder?: number
   }) => {
@@ -81,13 +87,18 @@ export function registerAgentIpc(): void {
 
     if (patch.name !== undefined) { fields.push('name = ?'); values.push(patch.name) }
     if (patch.role !== undefined) { fields.push('role = ?'); values.push(patch.role) }
-    if (patch.model !== undefined) { fields.push('model = ?'); values.push(patch.model) }
+    if (patch.model !== undefined && patch.model !== null && patch.model !== '') {
+      fields.push('model = ?')
+      values.push(patch.model)
+    }
     if (patch.description !== undefined) { fields.push('description = ?'); values.push(patch.description) }
     if (patch.systemPrompt !== undefined) { fields.push('system_prompt = ?'); values.push(patch.systemPrompt) }
     if (patch.preferredProvider !== undefined) { fields.push('preferred_provider = ?'); values.push(patch.preferredProvider) }
     if (patch.capabilities !== undefined) { fields.push('capabilities = ?'); values.push(patch.capabilities ? JSON.stringify(patch.capabilities) : null) }
     if (patch.whenToUse !== undefined) { fields.push('when_to_use = ?'); values.push(patch.whenToUse) }
     if (patch.outputContract !== undefined) { fields.push('output_contract = ?'); values.push(patch.outputContract) }
+    if (patch.customEnv !== undefined) { fields.push('custom_env = ?'); values.push(patch.customEnv ? JSON.stringify(patch.customEnv) : null) }
+    if (patch.customArgs !== undefined) { fields.push('custom_args = ?'); values.push(patch.customArgs ? JSON.stringify(patch.customArgs) : null) }
     if (patch.isEnabled !== undefined) { fields.push('is_enabled = ?'); values.push(patch.isEnabled ? 1 : 0) }
     if (patch.sortOrder !== undefined) { fields.push('sort_order = ?'); values.push(patch.sortOrder) }
 

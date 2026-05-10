@@ -10,6 +10,7 @@ import type { AgentProfile, ObservationTool } from '../ai/a2a-types'
 import { bus, type BusEvent } from './event-bus'
 import { taskQueue, type ClaimResult, type EnqueueTaskParams } from './task-queue'
 import type { SessionConfig } from '../ai/provider'
+import { writeObservabilityEvent } from '../core/logging'
 
 /** A pending message waiting to be enqueued when the agent becomes idle */
 interface PendingMessage {
@@ -28,9 +29,22 @@ export interface ResidentRuntime {
   pendingMessages: PendingMessage[] // Aligns with Slock: per-Agent message queue
 }
 
+/** Cached config + sessionId for hot-wake (aligns with Slock: idleAgentConfigs).
+ *  After turn_end, cache the last known good config so the next turn can
+ *  resume without querying the taskQueue (millisecond-level hot-wake). */
+interface IdleAgentConfig {
+  config: SessionConfig
+  sessionId: string | null
+  cachedAt: number
+}
+
 export class RuntimeRegistry {
   private runtimes = new Map<string, ResidentRuntime>() // profileId -> ResidentRuntime
   private config: SessionConfig | null = null
+
+  // Idle agent cache: profileId -> last known config+sessionId (Slock: idleAgentConfigs)
+  private idleAgentConfigs = new Map<string, IdleAgentConfig>()
+  private readonly IDLE_CACHE_TTL_MS = 30 * 60 * 1000 // 30 minutes
 
   // Loop safeguards per conversation
   private responseCounts = new Map<string, Map<string, number>>() // conversationId -> { agentProfileId -> count }
@@ -47,6 +61,9 @@ export class RuntimeRegistry {
       if (!profile.isEnabled) continue
 
       const runtime = new AgentRuntime(profile)
+      // Let every agent know about all participants so the system prompt
+      // includes the "其他参与者" (other participants) section.
+      runtime.setKnownAgents(profiles)
       const resident: ResidentRuntime = {
         profile,
         runtime,
@@ -99,6 +116,8 @@ export class RuntimeRegistry {
         }
       }
     }
+    // Clear all idle caches on global stop
+    this.idleAgentConfigs.clear()
   }
 
   /** Suspend a single agent (aligns with Slock: on-demand stop) */
@@ -107,6 +126,8 @@ export class RuntimeRegistry {
     if (!resident || !resident.isActive) return false
     resident.runtime.suspend()
     resident.isProcessing = false
+    // Clear idle cache — suspended agent needs fresh start on resume
+    this.idleAgentConfigs.delete(profileId)
     console.info('[RuntimeRegistry] suspended:', resident.profile.name)
     return true
   }
@@ -157,6 +178,12 @@ export class RuntimeRegistry {
     resident.isProcessing = true // Aligns with Slock: mark as busy
     taskQueue.start(task.id)
 
+    writeObservabilityEvent('task:started', {
+      conversationId: task.conversationId,
+      taskId: task.id,
+      profileId,
+    })
+
     // Re-check: task may have been cancelled between claim and start
     const currentTasks = taskQueue.getConversationTasks(task.conversationId)
     const currentTask = currentTasks.find((t) => t.id === task.id)
@@ -166,18 +193,6 @@ export class RuntimeRegistry {
       console.debug('[RuntimeRegistry] task was cancelled before execution:', task.id)
       return
     }
-
-    // Notify frontend that this agent has started thinking
-    bus.publish({
-      type: 'agent:thinking',
-      conversationId: task.conversationId,
-      actorType: 'agent',
-      actorId: profileId,
-      payload: {
-        agentName: resident.profile.name,
-        agentRole: resident.profile.role,
-      },
-    })
 
     try {
       const context = task.context ? JSON.parse(task.context) as Array<{ role: string; content: string }> : []
@@ -202,14 +217,21 @@ export class RuntimeRegistry {
       // Aligns with Slock: reuse active runtime (process reuse).
       // Only start a new session if the runtime is not already active.
       if (!resident.runtime.isActive && this.config) {
-        const lastSessionId = task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId)
+        // Hot-wake: check idle cache first (avoids taskQueue query)
+        const cached = this.idleAgentConfigs.get(profileId)
+        const cacheValid = cached && (Date.now() - cached.cachedAt < this.IDLE_CACHE_TTL_MS)
+
+        const lastSessionId = cacheValid
+          ? (cached!.sessionId ?? task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId))
+          : (task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId))
+
         try {
           const resumeConfig = lastSessionId
             ? { ...this.config, sessionId: lastSessionId }
             : this.config
           await resident.runtime.start(resumeConfig)
         } catch (resumeErr) {
-          // Session resume failed — fallback to a fresh session
+          // Session resume failed — fallback to a fresh session (Slock: resume_or_fresh)
           console.warn(
             '[RuntimeRegistry] session resume failed for', resident.profile.name,
             ', falling back to fresh session:', resumeErr
@@ -232,9 +254,25 @@ export class RuntimeRegistry {
         taskQueue.updateSessionId(task.id, sessionId)
       }
 
+      // Slock: cache config+sessionId for millisecond hot-wake on next turn
+      if (this.config) {
+        this.idleAgentConfigs.set(profileId, {
+          config: this.config,
+          sessionId: sessionId ?? null,
+          cachedAt: Date.now(),
+        })
+        console.debug('[RuntimeRegistry] idle cache updated:', resident.profile.name, 'sessionId=', sessionId)
+      }
+
       if (result.reply) {
         taskQueue.complete(task.id, result.reply)
         this.trackResponse(task.conversationId, profileId)
+
+        writeObservabilityEvent('task:completed', {
+          conversationId: task.conversationId,
+          taskId: task.id,
+          profileId,
+        })
 
         // Publish the reply back to the bus so other agents can see it
         bus.publish({
@@ -255,6 +293,13 @@ export class RuntimeRegistry {
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err)
       taskQueue.fail(task.id, errorMsg)
+
+      writeObservabilityEvent('task:failed', {
+        conversationId: task.conversationId,
+        taskId: task.id,
+        profileId,
+        error: errorMsg,
+      })
     } finally {
       resident.claimedTasks.delete(task.id)
       resident.isProcessing = false // Aligns with Slock: mark as idle
@@ -286,6 +331,12 @@ export class RuntimeRegistry {
 
       // Valid message — enqueue exactly ONE
       taskQueue.enqueue(pending.params)
+
+      writeObservabilityEvent('task:enqueued', {
+        conversationId: pending.params.conversationId,
+        profileId: resident.profile.id,
+      })
+
       console.debug('[RuntimeRegistry] dequeued 1 pending message for:', resident.profile.name, '(remaining:', resident.pendingMessages.length, ')')
       break
     }
@@ -405,6 +456,12 @@ export class RuntimeRegistry {
       }
     } else {
       taskQueue.enqueue(params)
+
+      writeObservabilityEvent('task:enqueued', {
+        conversationId: event.conversationId,
+        profileId: resident.profile.id,
+      })
+
       // Wakeup: trigger immediate claim instead of waiting for pollTasks
       this.claimAndExecute(resident.profile.id).catch((err) => {
         console.error('[RuntimeRegistry] wakeup claimAndExecute error:', err)

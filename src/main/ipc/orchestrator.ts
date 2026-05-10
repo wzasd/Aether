@@ -42,7 +42,7 @@ function validatePayload(payload: unknown): {
   if (!sc || typeof sc !== 'object' || Array.isArray(sc)) throw new Error('Invalid sessionConfig')
   const cfg = sc as Record<string, unknown>
 
-  const providerType = (typeof cfg.providerType === 'string' && cfg.providerType) ? cfg.providerType : 'claude-cli'
+  const providerType = (typeof cfg.providerType === 'string' && cfg.providerType) ? cfg.providerType : 'claude'
   const provider = providerRegistry.get(providerType)
   if (!provider) throw new Error(`Invalid provider: ${providerType}`)
 

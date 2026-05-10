@@ -163,4 +163,120 @@ describe('TaskQueue', () => {
     expect(childTask!.depth).toBe(1)
     expect(childTask!.parentTaskId).toBe(parent.id)
   })
+
+  // ─── cancelConversation ──────────────────────────────────────────────
+
+  it('cancelConversation cancels pending, claimed, and running tasks', () => {
+    queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'pending task' })
+    queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'claimed task' })
+    queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'running task' })
+    queue.enqueue({ conversationId: 'conv-2', agentProfileId: 'coder', message: 'other conv' })
+
+    // Claim one task and start another
+    const claimed = queue.claim('coder', 3)
+    queue.start(claimed.task!.id)
+
+    // Get the remaining pending task and claim it
+    const claimed2 = queue.claim('coder', 3)
+
+    const result = queue.cancelConversation('conv-1')
+
+    // Should have cancelled 1 pending + 1 claimed + 1 running = 3
+    expect(result.pending + result.claimed + result.running).toBe(3)
+    const conv1Tasks = queue.getConversationTasks('conv-1')
+    expect(conv1Tasks.every((t) => t.status === 'cancelled')).toBe(true)
+
+    // conv-2 should be unaffected
+    const conv2Tasks = queue.getConversationTasks('conv-2')
+    expect(conv2Tasks[0].status).toBe('pending')
+  })
+
+  it('cancelConversation returns zero counts for unknown conversation', () => {
+    const result = queue.cancelConversation('nonexistent')
+    expect(result.pending).toBe(0)
+    expect(result.claimed).toBe(0)
+    expect(result.running).toBe(0)
+  })
+
+  // ─── cancelTask ──────────────────────────────────────────────────────
+
+  it('cancelTask cancels a single pending task by ID', () => {
+    const task1 = queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'task 1' })
+    queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'task 2' })
+
+    const result = queue.cancelTask(task1.id)
+    expect(result).toBe(true)
+
+    const tasks = queue.getConversationTasks('conv-1')
+    expect(tasks.find((t) => t.id === task1.id)!.status).toBe('cancelled')
+    expect(tasks.find((t) => t.message === 'task 2')!.status).toBe('pending')
+  })
+
+  it('cancelTask cancels a claimed task by ID', () => {
+    queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'task' })
+    const claimResult = queue.claim('coder', 2)
+
+    const result = queue.cancelTask(claimResult.task!.id)
+    expect(result).toBe(true)
+
+    const tasks = queue.getConversationTasks('conv-1')
+    expect(tasks[0].status).toBe('cancelled')
+  })
+
+  it('cancelTask returns false for completed/failed/cancelled tasks', () => {
+    queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'task' })
+    const claimResult = queue.claim('coder', 2)
+    queue.complete(claimResult.task!.id, 'done')
+
+    const result = queue.cancelTask(claimResult.task!.id)
+    expect(result).toBe(false)
+  })
+
+  it('cancelTask returns false for unknown task ID', () => {
+    const result = queue.cancelTask('nonexistent-id')
+    expect(result).toBe(false)
+  })
+
+  // ─── clearStaleTasks ─────────────────────────────────────────────────
+
+  it('clearStaleTasks cancels all pending, claimed, and running tasks', () => {
+    queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'pending' })
+    queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'claimed' })
+    queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'running' })
+
+    // Claim and start one task
+    const claimed = queue.claim('coder', 3)
+    queue.start(claimed.task!.id)
+    // Claim another
+    queue.claim('coder', 3)
+
+    const count = queue.clearStaleTasks()
+    expect(count).toBe(3)
+
+    const tasks = queue.getConversationTasks('conv-1')
+    expect(tasks.every((t) => t.status === 'cancelled')).toBe(true)
+  })
+
+  it('clearStaleTasks does not affect completed or failed tasks', () => {
+    queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'completed' })
+    queue.enqueue({ conversationId: 'conv-1', agentProfileId: 'coder', message: 'pending' })
+
+    // Complete the first task
+    const claimResult = queue.claim('coder', 2)
+    queue.complete(claimResult.task!.id, 'done')
+
+    const count = queue.clearStaleTasks()
+    expect(count).toBe(1) // only the pending task
+
+    const tasks = queue.getConversationTasks('conv-1')
+    const completedTask = tasks.find((t) => t.message === 'completed')
+    const pendingTask = tasks.find((t) => t.message === 'pending')
+    expect(completedTask!.status).toBe('completed')
+    expect(pendingTask!.status).toBe('cancelled')
+  })
+
+  it('clearStaleTasks returns 0 when no stale tasks exist', () => {
+    const count = queue.clearStaleTasks()
+    expect(count).toBe(0)
+  })
 })

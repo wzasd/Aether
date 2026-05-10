@@ -13,7 +13,11 @@ vi.mock('../../ai/agent-runtime', () => ({
       return handler ? handler(obs) : { reply: `${profile.name} says: ${obs.message}`, relevanceScore: 0.8 }
     }),
     abort: vi.fn(),
+    suspend: vi.fn(),
+    resume: vi.fn(async () => ({ id: `session-${profile.id}` })),
+    isSuspended: false,
     dispose: vi.fn(async () => {}),
+    setKnownAgents: vi.fn(),
   })),
 }))
 
@@ -123,9 +127,11 @@ describe('Daemon', () => {
 
     await daemon.onUserMessage('conv-1', 'implement auth', [])
 
-    // Both agents should have pending tasks
-    expect(taskQueue.countPending('coder')).toBe(1)
-    expect(taskQueue.countPending('reviewer')).toBe(1)
+    // Both agents should have tasks (may be pending, claimed, or running due to wakeup)
+    const coderTasks = taskQueue.getConversationTasks('conv-1').filter((t) => t.agentProfileId === 'coder')
+    const reviewerTasks = taskQueue.getConversationTasks('conv-1').filter((t) => t.agentProfileId === 'reviewer')
+    expect(coderTasks.length).toBeGreaterThanOrEqual(1)
+    expect(reviewerTasks.length).toBeGreaterThanOrEqual(1)
   })
 
   it('publishes message:new event on user message', async () => {
@@ -200,11 +206,15 @@ describe('Daemon', () => {
     await daemon.start()
 
     await daemon.onUserMessage('conv-1', 'test', [])
-    expect(taskQueue.countPending('coder')).toBe(1)
+    // Task may be claimed/running due to wakeup, so check all non-terminal statuses
+    const tasksBefore = taskQueue.getConversationTasks('conv-1')
+    expect(tasksBefore.length).toBeGreaterThanOrEqual(1)
 
     daemon.abortConversation('conv-1')
 
-    expect(taskQueue.countPending('coder')).toBe(0)
+    // All tasks should now be cancelled or failed
+    const tasksAfter = taskQueue.getConversationTasks('conv-1')
+    expect(tasksAfter.every((t) => t.status === 'cancelled' || t.status === 'failed')).toBe(true)
   })
 
   it('aborts only runtimes with active tasks for target conversation', async () => {
@@ -219,8 +229,10 @@ describe('Daemon', () => {
     // Abort only conv-a
     daemon.abortConversation('conv-a')
 
-    // conv-b tasks should still be pending
-    expect(taskQueue.countPending('coder')).toBe(1) // conv-b's task
+    // conv-b tasks should still exist and not be cancelled
+    const convBTasks = taskQueue.getConversationTasks('conv-b')
+    expect(convBTasks.length).toBeGreaterThanOrEqual(1)
+    expect(convBTasks.every((t) => t.status !== 'cancelled')).toBe(true)
   })
 
   it('does not crash when webContents is destroyed', async () => {

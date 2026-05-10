@@ -82,6 +82,10 @@ export class AgentMemory {
       '- Currently working on:',
       '- Last interaction:',
       '',
+      '---',
+      '',
+      '**Compaction Safety**: Your context will be periodically compressed to stay within limits. When this happens, you lose in-conversation history but MEMORY.md is always re-read. After reading MEMORY.md, you should understand who you are, what you know, and what you were working on. Before a long task, write a brief "Active Context" note here. After completing work, update Key Knowledge and Active Context.',
+      '',
     ].join('\n')
 
     await writeFile(this.getMemoryPath(profileId), template, { mode: 0o600 })

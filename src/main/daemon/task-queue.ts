@@ -196,6 +196,37 @@ export class TaskQueue {
     ).run(Date.now(), error, taskId)
   }
 
+  /** Clean up stale tasks from previous sessions.
+   *  Called on Daemon startup to prevent old pending/claimed/running tasks
+   *  from blocking the queue. These are orphaned from previous app runs. */
+  cleanupStaleTasks(): { pending: number; claimed: number; running: number } {
+    const db = this.getDb()
+    const now = Date.now()
+
+    const pending = db.prepare(
+      `UPDATE agent_task_queue SET status = 'cancelled', completed_at = ?
+       WHERE status = 'pending'`
+    ).run(now).changes as number
+
+    const claimed = db.prepare(
+      `UPDATE agent_task_queue SET status = 'failed', completed_at = ?, error = 'stale:claimed_on_restart'
+       WHERE status = 'claimed'`
+    ).run(now).changes as number
+
+    const running = db.prepare(
+      `UPDATE agent_task_queue SET status = 'failed', completed_at = ?, error = 'stale:running_on_restart'
+       WHERE status = 'running'`
+    ).run(now).changes as number
+
+    if (pending + claimed + running > 0) {
+      console.info(
+        '[TaskQueue] cleaned up stale tasks:', pending, 'pending,', claimed, 'claimed,', running, 'running'
+      )
+    }
+
+    return { pending, claimed, running }
+  }
+
   /** Cancel all pending tasks for a conversation */
   cancelPending(conversationId: string): number {
     const result = this.getDb().prepare(
@@ -204,6 +235,55 @@ export class TaskQueue {
        WHERE conversation_id = ? AND status = 'pending'`
     ).run(conversationId)
     return result.changes as number
+  }
+
+  /** Cancel a single task by ID (any status except completed/failed/cancelled) */
+  cancelTask(taskId: string): boolean {
+    const result = this.getDb().prepare(
+      `UPDATE agent_task_queue
+       SET status = 'cancelled', completed_at = ?
+       WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')`
+    ).run(Date.now(), taskId)
+    return (result.changes as number) > 0
+  }
+
+  /** Cancel all tasks (pending + claimed + running) for a conversation.
+   *  Returns counts by previous status for diagnostics. */
+  cancelConversation(conversationId: string): { pending: number; claimed: number; running: number } {
+    const db = this.getDb()
+    const now = Date.now()
+
+    const pending = db.prepare(
+      `UPDATE agent_task_queue SET status = 'cancelled', completed_at = ?
+       WHERE conversation_id = ? AND status = 'pending'`
+    ).run(now, conversationId).changes as number
+
+    const claimed = db.prepare(
+      `UPDATE agent_task_queue SET status = 'cancelled', completed_at = ?
+       WHERE conversation_id = ? AND status = 'claimed'`
+    ).run(now, conversationId).changes as number
+
+    const running = db.prepare(
+      `UPDATE agent_task_queue SET status = 'cancelled', completed_at = ?
+       WHERE conversation_id = ? AND status = 'running'`
+    ).run(now, conversationId).changes as number
+
+    return { pending, claimed, running }
+  }
+
+  /** Clear all stale (pending/claimed/running) tasks from previous sessions.
+   *  Called on daemon startup to prevent old tasks from blocking the queue. */
+  clearStaleTasks(): number {
+    const result = this.getDb().prepare(
+      `UPDATE agent_task_queue
+       SET status = 'cancelled', completed_at = ?
+       WHERE status IN ('pending', 'claimed', 'running')`
+    ).run(Date.now())
+    const count = result.changes as number
+    if (count > 0) {
+      console.info('[TaskQueue] cleared', count, 'stale tasks from previous sessions')
+    }
+    return count
   }
 
   /** Get all tasks for a conversation */
@@ -250,6 +330,14 @@ export class TaskQueue {
       `SELECT COUNT(*) as count FROM agent_task_queue
        WHERE agent_profile_id = ? AND status = 'pending'`
     ).get(agentProfileId) as { count: number }
+    return row.count
+  }
+
+  /** Count all pending tasks across all agents */
+  countAllPending(): number {
+    const row = this.getDb().prepare(
+      `SELECT COUNT(*) as count FROM agent_task_queue WHERE status = 'pending'`
+    ).get() as { count: number }
     return row.count
   }
 

@@ -58,7 +58,10 @@ After (pull):
 - Interface: Zero breaking change. `onObservation({ message, context, ... })` signature unchanged.
 - Context source: `context` parameter populated from `messages` table via `taskQueue.getConversationHistory()`
 - Context strategy: **No artificial truncation** (aligned with Slock and Multica). Default DB query `LIMIT 50` (matching Slock's `message read` default and Multica's `comment list` default). No token budget, no message count cap. LLM context window is the only natural limit. Single-message cap at 32,000 chars (~8,000 tokens) for extreme outlier protection only.
-- **Correction history**: Initial proposal used `MAX_CONTEXT_MESSAGES=20` + `MAX_CONTEXT_TOKENS=4000` based on estimation. @tomek-rumore pushed back against experience-based numbers. Investigation of Slock source code (`daemon.go`, `chat.sql.go`) and Multica source code (`task.go`, `context.go`) revealed both use agent-pull with LLM-native context management, not platform-side truncation. Corrected 2026-05-09.
+- **Correction history**: Initial proposal used `MAX_CONTEXT_MESSAGES=20` + `MAX_CONTEXT_TOKENS=4000` based on estimation. @tomek-rumore pushed back against experience-based numbers. Investigation revealed:
+  - **Slock** (behavioral inference, not source-verified): Slock Agent (`@UI设计专家`) operates via `slock message read` command to fetch channel history, with no observed platform-side truncation. MEMORY.md (3KB–30KB) is injected in full at startup.
+  - **Multica** (source-verified): Go codebase at `/Users/wangzhao/Documents/agentWorkSpace/catwork/multica` confirms `task.go` and `context.go` implement agent-pull with LLM-native context management, no platform-side truncation.
+  - Both align on agent-pull with LLM-native context management, not platform-side truncation. Corrected 2026-05-09.
 - Safeguards retained: `MAX_RESPONSES_PER_AGENT=5`, `COOLDOWN_MS=2000`
 
 ### Layer 2: Private Agent Memory (Phase B)
@@ -191,7 +194,7 @@ async append(profileId: string, entry: MemoryEntry): Promise<void> {
 | Channel model | `#channel` message bus | `messages` table |
 | Agent sees | Full channel history (pull) | Full conversation history (pull, Phase A) |
 | Agent remembers | `MEMORY.md` + `notes/` in workspace | `~/.bytro/agent-memory/{id}/MEMORY.md` (Phase B) |
-| Memory injection | Read at startup, referenced on demand | Summarized into systemPrompt (2000-token cap) |
+| Memory injection | Read at startup, referenced on demand | Full injection into systemPrompt (no truncation) |
 | Memory update | Agent writes after work | Rule-driven on conversation end |
 
 ## References

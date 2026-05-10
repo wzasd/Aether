@@ -27,11 +27,11 @@ export interface Conversation {
 }
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
-  Idle:    ['Running'],
-  Running: ['Waiting', 'Done', 'Error', 'Idle'],
+  Idle:    ['Running', 'Idle'],
+  Running: ['Running', 'Waiting', 'Done', 'Error', 'Idle'],
   Waiting: ['Running', 'Error', 'Idle'],
   Error:   ['Running', 'Idle'],
-  Done:    ['Running'],
+  Done:    ['Running', 'Done'],
 }
 
 function validateRange(range?: { from?: number; to?: number }): void {
@@ -183,6 +183,16 @@ export function registerConversationIpc(): void {
     // Publishing message:new for agent replies causes infinite loop:
     // Agent reply → message:create → message:new → all agents enqueue → reply → repeat
     if (data.role === 'user') {
+      // Fetch recent conversation context for Agent pre-injection
+      const recentMessages = db.prepare(
+        'SELECT role, content, agent_profile_id FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 20'
+      ).all(data.conversation_id) as Array<{ role: string; content: string; agent_profile_id: string | null }>
+
+      const context = recentMessages.reverse().map((m) => ({
+        role: m.role === 'assistant' && m.agent_profile_id ? 'agent' : m.role,
+        content: m.content,
+      }))
+
       bus.publish({
         type: 'message:new',
         conversationId: data.conversation_id,
@@ -192,6 +202,7 @@ export function registerConversationIpc(): void {
           messageId: id,
           role: data.role,
           content: data.content,
+          context,
         },
       })
     }
@@ -329,6 +340,62 @@ export function registerConversationIpc(): void {
     }
     const row = db.prepare('SELECT COALESCE(SUM(total_cost), 0) AS total FROM usage_daily').get() as { total: number }
     return row.total
+  })
+
+  // Usage: per-provider token aggregation for the last N days
+  ipcMain.handle('usage:byProvider', (_event, days: number = 7) => {
+    if (typeof days !== 'number' || days < 1 || !Number.isFinite(days)) {
+      throw new Error('Invalid payload: days must be a positive number')
+    }
+    const db = getDb()
+    const from = Math.floor(Date.now() / 1000) - (days * 86400)
+    const rows = db.prepare(
+      `SELECT
+         COALESCE(provider_id, 'unknown') AS provider_id,
+         SUM(input_tokens)               AS total_input_tokens,
+         SUM(output_tokens)              AS total_output_tokens,
+         SUM(cost_usd)                   AS total_cost_usd,
+         COUNT(*)                        AS total_calls
+       FROM conversation_usage
+       WHERE created_at >= ?
+       GROUP BY provider_id`
+    ).all(from) as Array<{
+      provider_id: string
+      total_input_tokens: number
+      total_output_tokens: number
+      total_cost_usd: number
+      total_calls: number
+    }>
+    return rows
+  })
+
+  // Usage: per-agent token aggregation for the last N days
+  // Joins conversation_usage → conversations to resolve agent_profile_id
+  ipcMain.handle('usage:byAgent', (_event, days: number = 7) => {
+    if (typeof days !== 'number' || days < 1 || !Number.isFinite(days)) {
+      throw new Error('Invalid payload: days must be a positive number')
+    }
+    const db = getDb()
+    const from = Math.floor(Date.now() / 1000) - (days * 86400)
+    const rows = db.prepare(
+      `SELECT
+         COALESCE(c.agent_profile_id, 'unknown') AS agent_profile_id,
+         SUM(cu.input_tokens)                    AS total_input_tokens,
+         SUM(cu.output_tokens)                   AS total_output_tokens,
+         SUM(cu.cost_usd)                        AS total_cost_usd,
+         COUNT(*)                                 AS total_calls
+       FROM conversation_usage cu
+       JOIN conversations c ON c.id = cu.conversation_id
+       WHERE cu.created_at >= ?
+       GROUP BY c.agent_profile_id`
+    ).all(from) as Array<{
+      agent_profile_id: string
+      total_input_tokens: number
+      total_output_tokens: number
+      total_cost_usd: number
+      total_calls: number
+    }>
+    return rows
   })
 
   // Export conversation

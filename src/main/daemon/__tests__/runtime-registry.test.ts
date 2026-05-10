@@ -13,7 +13,11 @@ vi.mock('../../ai/agent-runtime', () => ({
       return handler ? await handler(obs) : { reply: `${profile.name} reply`, relevanceScore: 0.8 }
     }),
     abort: vi.fn(),
+    suspend: vi.fn(),
+    resume: vi.fn(async () => ({ id: `session-${profile.id}` })),
+    isSuspended: false,
     dispose: vi.fn(async () => {}),
+    setKnownAgents: vi.fn(),
   })),
 }))
 
@@ -435,7 +439,7 @@ describe('RuntimeRegistry', () => {
     expect(tasks[0].error).toBe('Simulated LLM failure')
   })
 
-  it('publishes agent:thinking before executing', async () => {
+  it('does NOT publish agent:thinking (feature removed)', async () => {
     await registry.initialize(profiles, config)
     await registry.startAll()
 
@@ -450,17 +454,8 @@ describe('RuntimeRegistry', () => {
 
     await registry.claimAndExecute('coder')
 
-    expect(thinkingHandler).toHaveBeenCalledTimes(1)
-    expect(thinkingHandler).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'agent:thinking',
-        actorId: 'coder',
-        payload: expect.objectContaining({
-          agentName: 'Coder',
-          agentRole: 'coder',
-        }),
-      })
-    )
+    // agent:thinking was removed per user request — no event should be published
+    expect(thinkingHandler).toHaveBeenCalledTimes(0)
   })
 
   it('does NOT enqueue follow-up tasks on peer replies (pull model)', async () => {

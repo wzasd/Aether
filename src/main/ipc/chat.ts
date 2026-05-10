@@ -52,7 +52,7 @@ function validateSessionConfig(config: SessionConfig): SessionConfig {
     throw new Error('Invalid session config')
   }
 
-  const providerType = config.providerType || 'claude-cli'
+  const providerType = config.providerType || 'claude'
   const provider = providerRegistry.get(providerType)
   if (!provider) {
     throw new Error(`Invalid provider: ${providerType}`)
@@ -144,7 +144,7 @@ export function registerChatIpc(): void {
     cleanupSessionHandler(sessionId)
   })
 
-  // ─── Dynamic model & config (ACP) ──────────────────────────────────────
+  // ─── Dynamic model & config ────────────────────────────────────────────
 
   ipcMain.handle('chat:getAvailableModels', async (_, sessionId: string) => {
     return aiEngine.getAvailableModels(assertSessionId(sessionId))

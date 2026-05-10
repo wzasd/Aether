@@ -147,8 +147,8 @@ export function writeMcpConfigFile(workspaceDir?: string): string | null {
 }
 
 // Session startup — always regenerates to avoid stale config from previous sessions.
-export function getMcpConfigArgs(workspaceDir?: string): string[] {
+export function getMcpConfigArgs(workspaceDir?: string, flagName = '--mcp-config'): string[] {
   const configPath = writeMcpConfigFile(workspaceDir)
   if (configPath === null) return []
-  return ['--mcp-config', configPath]
+  return [flagName, configPath]
 }

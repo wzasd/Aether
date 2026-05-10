@@ -15,6 +15,7 @@ import { registerUpdateIpc } from './update'
 import { registerMcpIpc } from './mcp'
 import { registerTeamIpc } from './team'
 import { registerLogsIpc } from './logs'
+import { registerDaemonIpc } from './daemon'
 
 export function registerIpcHandlers(): void {
   registerSystemIpc()
@@ -34,4 +35,5 @@ export function registerIpcHandlers(): void {
   registerMcpIpc()
   registerTeamIpc()
   registerLogsIpc()
+  registerDaemonIpc()
 }

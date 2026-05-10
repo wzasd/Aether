@@ -17,7 +17,6 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.21.0",
     "@electron-toolkit/utils": "^4.0.0",
     "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-virtual": "^3.13.24",
@@ -42,10 +41,8 @@
     "zustand": "^4.5.5"
   },
   "optionalDependencies": {
-    "@agentclientprotocol/claude-agent-acp": "0.29.2",
     "@qwen-code/qwen-code": "0.15.6",
-    "@tencent-ai/codebuddy-code": "2.73.0",
-    "@zed-industries/codex-acp": "0.9.5"
+    "@tencent-ai/codebuddy-code": "2.73.0"
   },
   "devDependencies": {
     "@electron-toolkit/preload": "^3.0.1",

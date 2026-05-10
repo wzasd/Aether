@@ -44,6 +44,13 @@ export type RuntimeTerminationReason = 'completed' | 'aborted' | 'crashed' | 'zo
 export type ObservabilityEventName =
   | 'runtime:started'
   | 'runtime:terminated'
+  | 'runtime:binary_resolved'
+  | 'runtime:binary_not_found'
+  | 'runtime:model_resolved'
+  | 'runtime:models_listed'
+  | 'runtime:process_spawned'
+  | 'runtime:process_stderr'
+  | 'runtime:process_stdin'
   | 'permission:requested'
   | 'permission:granted'
   | 'permission:denied'
@@ -300,12 +307,13 @@ function isLogLevel(value: unknown): value is LogLevel {
 }
 
 function inferObservabilityLevel(event: ObservabilityEventName, payload: ObservabilityEventPayload): LogLevel {
-  if (event === 'task:failed') return 'error'
-  if (event === 'permission:abandoned') return 'warn'
+  if (event === 'task:failed' || event === 'runtime:binary_not_found') return 'error'
+  if (event === 'permission:abandoned' || event === 'runtime:process_stderr') return 'warn'
   if (event === 'runtime:terminated') {
     if (payload.reason === 'crashed' || payload.reason === 'zombie') return 'error'
     if (payload.reason === 'aborted' || payload.reason === 'disposed') return 'warn'
   }
+  if (event === 'runtime:process_stdin') return 'debug'
   return 'info'
 }
 

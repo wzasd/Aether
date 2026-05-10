@@ -129,6 +129,15 @@ export function registerSystemIpc(): void {
     const version = await provider.detect()
     return { ok: version !== null, version }
   })
+
+  ipcMain.handle('provider:refreshModels', async (_event, providerIds?: string[]) => {
+    const results = await providerRegistry.refreshModels(providerIds)
+    const output: Record<string, Array<{ id: string; name: string; contextWindow: number; maxOutputTokens?: number }>> = {}
+    results.forEach((models, providerId) => {
+      output[providerId] = models
+    })
+    return output
+  })
 }
 
 function assertProviderId(value: unknown): string {
