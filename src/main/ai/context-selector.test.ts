@@ -162,9 +162,8 @@ describe('renderContextPacket', () => {
       output.indexOf('[TASK HANDOFF]'),
       output.indexOf('[TASK PROGRESS]'),
       output.indexOf('[RELEVANT CONTEXT]'),
-      output.indexOf('[PROJECT MEMORY]'),
-      output.indexOf('[AGENT ROSTER]')
-    ]
+      output.indexOf('[PROJECT MEMORY]')
+    ].filter(i => i >= 0) // skip sections not present in output
     for (let i = 1; i < sectionOrder.length; i++) {
       expect(sectionOrder[i]).toBeGreaterThan(sectionOrder[i - 1])
     }
@@ -195,5 +194,26 @@ describe('renderContextPacket', () => {
     expect(output).toContain('[TASK PROGRESS]')
     expect(output).toContain('Goal: Add login page')
     expect(output).not.toContain('[RELEVANT CONTEXT]')
+  })
+
+  it('renders AGENT ROSTER section when roster data present', () => {
+    const packet = makePacket({
+      agentRoster: [
+        { name: 'Claude', role: 'implementation' },
+        { name: 'Planner', role: 'planning' }
+      ]
+    })
+    const output = renderContextPacket(packet)
+
+    expect(output).toContain('[AGENT ROSTER]')
+    expect(output).toContain('- @Claude (implementation)')
+    expect(output).toContain('- @Planner (planning)')
+  })
+
+  it('omits AGENT ROSTER when roster is empty', () => {
+    const packet = makePacket()
+    const output = renderContextPacket(packet)
+
+    expect(output).not.toContain('[AGENT ROSTER]')
   })
 })
