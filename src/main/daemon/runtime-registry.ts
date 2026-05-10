@@ -225,8 +225,8 @@ export class RuntimeRegistry {
       // Only start a new session if the runtime is not already active.
       if (!resident.runtime.isActive && this.config) {
         // Hot-wake: check idle cache first (avoids taskQueue query)
-        // FR-3: idleAgentConfigs key includes providerType for per-provider isolation
-        const providerType = this.config.providerType
+        // Use task's providerType (set at enqueue time) for per-provider session isolation
+        const providerType = task.providerType ?? resident.profile.preferredProvider ?? this.config.providerType
         const idleCacheKey = `${profileId}:${providerType}`
         const cached = this.idleAgentConfigs.get(idleCacheKey)
         const cacheValid = cached && (Date.now() - cached.cachedAt < this.IDLE_CACHE_TTL_MS)
@@ -268,14 +268,15 @@ export class RuntimeRegistry {
       // Slock: cache config+sessionId for millisecond hot-wake on next turn
       // FR-3: idleAgentConfigs key includes providerType for per-provider isolation
       if (this.config) {
-        const idleCacheKey = `${profileId}:${this.config.providerType}`
+        const cacheProviderType = task.providerType ?? resident.profile.preferredProvider ?? this.config.providerType
+        const idleCacheKey = `${profileId}:${cacheProviderType}`
         this.idleAgentConfigs.set(idleCacheKey, {
           config: this.config,
           sessionId: sessionId ?? null,
-          providerType: this.config.providerType,
+          providerType: cacheProviderType,
           cachedAt: Date.now(),
         })
-        console.debug('[RuntimeRegistry] idle cache updated:', resident.profile.name, 'sessionId=', sessionId, 'provider=', this.config.providerType)
+        console.debug('[RuntimeRegistry] idle cache updated:', resident.profile.name, 'sessionId=', sessionId, 'provider=', cacheProviderType)
       }
 
       if (result.reply) {
@@ -456,7 +457,7 @@ export class RuntimeRegistry {
     const params: EnqueueTaskParams = {
       conversationId: event.conversationId,
       agentProfileId: resident.profile.id,
-      providerType: this.config?.providerType,
+      providerType: resident.profile.preferredProvider ?? this.config?.providerType,
       message: messageContent,
       context,
     }
