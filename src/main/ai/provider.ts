@@ -37,6 +37,7 @@ export interface ProviderMeta {
 
 export interface ProviderConfig {
   enabled: boolean
+  profileId?: string
   binaryPath?: string
   extraEnv?: Record<string, string>
 }

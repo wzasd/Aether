@@ -5,6 +5,7 @@ import type { OutputParser } from './parsers/output-parser'
 import { BaseCLIProvider } from './base-cli-provider'
 import { GeminiOutputParser } from './parsers/gemini-output-parser'
 import { Secrets } from '../../core/secrets'
+import { writeObservabilityEvent } from '../../core/logging'
 
 const GEMINI_META: ProviderMeta = {
   id: 'gemini',
@@ -82,7 +83,19 @@ export class GeminiProvider extends BaseCLIProvider {
       effectiveConfig = { ...config, permissionMode: 'plan' }
     }
 
-    const sessionId = effectiveConfig.sessionId || randomUUID()
+    // Validate config.sessionId — reject IDs from other providers (defense-in-depth)
+    const validProvidedSessionId = effectiveConfig.sessionId && this.isValidSessionId(effectiveConfig.sessionId)
+      ? effectiveConfig.sessionId
+      : null
+
+    if (effectiveConfig.sessionId && !validProvidedSessionId) {
+      writeObservabilityEvent('runtime:session_id_rejected', {
+        providerType: this.meta.id,
+        sessionId: effectiveConfig.sessionId,
+      })
+    }
+
+    const sessionId = validProvidedSessionId || randomUUID()
     const sessionConfig = { ...effectiveConfig, sessionId }
 
     // Reuse existing entry to preserve Gemini's real session_id across turns

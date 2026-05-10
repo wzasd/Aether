@@ -5,6 +5,7 @@ import type { OutputParser } from './parsers/output-parser'
 import { BaseCLIProvider } from './base-cli-provider'
 import { ClaudeOutputParser } from './parsers/claude-output-parser'
 import { Secrets } from '../../core/secrets'
+import { writeObservabilityEvent } from '../../core/logging'
 
 const COPILOT_META: ProviderMeta = {
   id: 'copilot',
@@ -74,6 +75,12 @@ export class CopilotProvider extends BaseCLIProvider {
     return new ClaudeOutputParser('stream-json', '')
   }
 
+  /** Copilot uses UUID-format session IDs. Reject OpenCode-style `oc-` IDs. */
+  protected isValidSessionId(sessionId: string): boolean {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    return UUID_RE.test(sessionId)
+  }
+
   // ─── Session lifecycle (per-turn, like OpenCode) ────────────────
 
   override async startSession(config: SessionConfig): Promise<Session> {
@@ -82,7 +89,19 @@ export class CopilotProvider extends BaseCLIProvider {
       effectiveConfig = { ...config, permissionMode: 'plan' }
     }
 
-    const sessionId = effectiveConfig.sessionId || randomUUID()
+    // Validate config.sessionId — reject IDs from other providers (defense-in-depth)
+    const validProvidedSessionId = effectiveConfig.sessionId && this.isValidSessionId(effectiveConfig.sessionId)
+      ? effectiveConfig.sessionId
+      : null
+
+    if (effectiveConfig.sessionId && !validProvidedSessionId) {
+      writeObservabilityEvent('runtime:session_id_rejected', {
+        providerType: this.meta.id,
+        sessionId: effectiveConfig.sessionId,
+      })
+    }
+
+    const sessionId = validProvidedSessionId || randomUUID()
     const sessionConfig = { ...effectiveConfig, sessionId }
     const session: Session = {
       id: sessionId,

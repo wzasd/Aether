@@ -434,7 +434,7 @@ class AgentOrchestrator {
    */
   private cleanupBusSubscriptions(conversationId: string): void {
     const prefix = `${conversationId}:`
-    for (const [key, subs] of this.busSubscriptions) {
+    for (const [key, subs] of Array.from(this.busSubscriptions)) {
       if (key.startsWith(prefix)) {
         for (const sub of subs) {
           bus.unsubscribe(sub.eventType as any, sub.handler)
@@ -449,7 +449,7 @@ class AgentOrchestrator {
    * Used for full orchestrator disposal.
    */
   private cleanupAllBusSubscriptions(): void {
-    for (const [, subs] of this.busSubscriptions) {
+    for (const [, subs] of Array.from(this.busSubscriptions)) {
       for (const sub of subs) {
         bus.unsubscribe(sub.eventType as any, sub.handler)
       }

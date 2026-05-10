@@ -127,7 +127,19 @@ export class KimiProvider extends BaseCLIProvider {
   // ─── Session lifecycle (per-turn spawn) ────────────────────────
 
   override async startSession(config: SessionConfig): Promise<Session> {
-    const sessionId = config.sessionId || randomUUID()
+    // Validate config.sessionId — reject IDs from other providers (defense-in-depth)
+    const validProvidedSessionId = config.sessionId && this.isValidSessionId(config.sessionId)
+      ? config.sessionId
+      : null
+
+    if (config.sessionId && !validProvidedSessionId) {
+      writeObservabilityEvent('runtime:session_id_rejected', {
+        providerType: this.meta.id,
+        sessionId: config.sessionId,
+      })
+    }
+
+    const sessionId = validProvidedSessionId || randomUUID()
     const sessionConfig = { ...config, sessionId }
     const session: Session = {
       id: sessionId,
