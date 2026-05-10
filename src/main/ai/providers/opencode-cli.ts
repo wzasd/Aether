@@ -1,11 +1,13 @@
-import { spawn, type ChildProcess } from 'child_process'
-import type { SessionConfig, Session, ProviderMeta } from '../provider'
+import { homedir } from 'os'
+import { spawn, type ChildProcess, execFile } from 'child_process'
+import type { SessionConfig, Session, ProviderMeta, ModelInfo } from '../provider'
 import type { OutputParser } from './parsers/output-parser'
 import { BaseCLIProvider } from './base-cli-provider'
 import { OpenCodeOutputParser } from './parsers/opencode-output-parser'
+import { writeObservabilityEvent } from '../../core/logging'
 
 const OPENCODE_META: ProviderMeta = {
-  id: 'opencode-cli',
+  id: 'opencode',
   name: 'OpenCode',
   binary: 'opencode',
   vendor: 'SST/Anomaly',
@@ -21,14 +23,15 @@ const OPENCODE_META: ProviderMeta = {
   permissionFlags: {
     manual: [],
     autoEdit: ['--dangerously-skip-permissions'],
-    plan: ['--agent', 'plan'],
-    fullAuto: ['--dangerously-skip-permissions']
+    plan: [],
+    fullAuto: ['--dangerously-skip-permissions'],
+    trusted: ['--dangerously-skip-permissions']
   },
   supportsStreamJson: true,
   supportsInteractive: true
 }
 
-export class OpenCodeCLIProvider extends BaseCLIProvider {
+export class OpenCodeProvider extends BaseCLIProvider {
   readonly meta = OPENCODE_META
 
   private opencodeSessionId = ''
@@ -82,7 +85,7 @@ export class OpenCodeCLIProvider extends BaseCLIProvider {
     entry.status = 'running'
     entry.session.status = 'running'
 
-    const binary = this.resolveOpenCodeBinary()
+    const binary = this.resolveBinary()
     const args = this.buildRunArgs(entry.config, content)
     const env = { ...process.env, ...this.buildEnv() }
 
@@ -217,16 +220,60 @@ export class OpenCodeCLIProvider extends BaseCLIProvider {
     return new OpenCodeOutputParser()
   }
 
-  private resolveOpenCodeBinary(): string {
-    return this.config?.binaryPath || this.meta.binary
+  async listModels(): Promise<ModelInfo[]> {
+    const binary = this.resolveBinary()
+    return new Promise((resolve) => {
+      execFile(binary, ['models'], (err, stdout) => {
+        if (err || !stdout) {
+          writeObservabilityEvent('runtime:models_listed', {
+            profileId: this.config?.profileId,
+            runtimeKey: this.meta.id,
+            error: err?.message || 'no stdout',
+            modelCount: 0
+          })
+          resolve(this.meta.models)
+          return
+        }
+        const lines = stdout.trim().split('\n').filter(Boolean)
+        const models: ModelInfo[] = lines.map((line) => {
+          const id = line.trim()
+          const name = id.split('/').pop() || id
+          return { id, name, contextWindow: 200000 }
+        })
+        writeObservabilityEvent('runtime:models_listed', {
+          profileId: (this as any).config?.profileId,
+          runtimeKey: this.meta.id,
+          modelCount: models.length
+        })
+        resolve(models.length > 0 ? models : this.meta.models)
+      })
+    })
+  }
+
+  /** OpenCode installs to ~/.opencode/bin/opencode by default. */
+  protected override getBinaryCandidates(): string[] {
+    return [
+      `${homedir()}/.opencode/bin/${this.meta.binary}`,
+      `/opt/homebrew/bin/${this.meta.binary}`,
+      `/usr/local/bin/${this.meta.binary}`,
+    ]
   }
 
   private buildRunArgs(config: SessionConfig, message: string): string[] {
     const args = [
       'run',
       '--format', 'json',
-      '--model', config.model
+      '--pure',
+      '--dir', config.workingDir || process.cwd(),
+      '--model', config.model,
     ]
+
+    // OpenCode agents: 'build' (default primary), 'plan' (for plan mode).
+    // Whitelist validation: only pass valid OpenCode agent names.
+    const VALID_OPENCODE_AGENTS = ['build', 'plan'] as const
+    const rawAgent = config.permissionMode === 'plan' ? 'plan' : 'build'
+    const agentName = VALID_OPENCODE_AGENTS.includes(rawAgent as any) ? rawAgent : 'build'
+    args.push('--agent', agentName)
 
     const permFlags = this.meta.permissionFlags[config.permissionMode]
     if (permFlags.length > 0) {
@@ -237,11 +284,21 @@ export class OpenCodeCLIProvider extends BaseCLIProvider {
       args.push('--session', this.opencodeSessionId)
     }
 
-    if (config.appendSystemPrompt) {
-      args.push('--prompt', config.appendSystemPrompt)
+    // OpenCode does not support --prompt flag. System prompt is prepended
+    // to the message content, aligned with how Slock passes standingPrompt.
+    // Layer 2B: For plan agent, inject a summary instruction so the LLM
+    // always produces natural-language output even after pure tool calls.
+    let effectiveMessage = config.appendSystemPrompt
+      ? `${config.appendSystemPrompt}\n\n---\n\n${message}`
+      : message
+
+    if (agentName === 'plan') {
+      effectiveMessage += '\n\n[系统指令] 完成所有操作后，你必须用自然语言总结你的操作和结果。即使你只调用了工具，也必须输出总结。'
     }
 
-    args.push(message)
+    // '--' separator prevents yargs from interpreting message content as flags.
+    // Without this, messages containing '--' prefixed tokens cause parse errors.
+    args.push('--', effectiveMessage)
 
     return args
   }

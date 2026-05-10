@@ -57,10 +57,7 @@ export function formatContinuationPrompt(capsule: CollaborationContinuityCapsule
  * Each task gets a capsule that tracks its session state. When a child task
  * completes, the orchestrator checks the parent capsule to decide whether to:
  * 1. Create a feedback task (parent session is gone)
- * 2. Inject directly into parent's running session via ACP session/load
- *
- * ACP advantage: Bytro can use session/load + setModel + setConfigOption to
- * fully restore a session, while clowder-ai's CLI only has --resume <sessionId>.
+ * 2. Inject directly into parent's running session via session resume.
  */
 export class ContinuityCapsuleManager {
   private capsules = new Map<string, CollaborationContinuityCapsule>()

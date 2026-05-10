@@ -12,6 +12,8 @@ export interface AgentProfileRow {
   capabilities: string | null
   when_to_use: string | null
   output_contract: string | null
+  custom_env: string | null
+  custom_args: string | null
   is_enabled: number
   sort_order: number
   created_at: number
@@ -21,6 +23,11 @@ export interface AgentProfileRow {
 export function parseCapabilities(raw: string | null): string[] | undefined {
   if (!raw) return undefined
   try { return JSON.parse(raw) } catch { return undefined }
+}
+
+export function parseJsonField<T>(raw: string | null): T | undefined {
+  if (!raw) return undefined
+  try { return JSON.parse(raw) as T } catch { return undefined }
 }
 
 export function rowToProfile(row: AgentProfileRow): AgentProfile {
@@ -36,6 +43,8 @@ export function rowToProfile(row: AgentProfileRow): AgentProfile {
     capabilities: parseCapabilities(row.capabilities),
     whenToUse: row.when_to_use || undefined,
     outputContract: row.output_contract || undefined,
+    customEnv: parseJsonField<Record<string, string>>(row.custom_env),
+    customArgs: parseJsonField<string[]>(row.custom_args),
     isEnabled: row.is_enabled === 1,
     sortOrder: row.sort_order,
     createdAt: row.created_at,

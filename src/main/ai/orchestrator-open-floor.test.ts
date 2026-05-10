@@ -36,8 +36,8 @@ const { mockBus } = vi.hoisted(() => {
       if (idx >= 0) list.splice(idx, 1)
     })
 
-    publish = vi.fn((event: { type: string }): void => {
-      const list = this.handlers.get(event.type) ?? []
+    publish = vi.fn((event: Record<string, unknown>): void => {
+      const list = this.handlers.get(event.type as string) ?? []
       for (const h of list) h(event)
     })
 
@@ -124,6 +124,7 @@ function resetOrchestratorState(): void {
     conversationModes: Map<string, unknown>
     webContentsMap: Map<string, unknown>
     baseConfigs: Map<string, unknown>
+    openFloorCleanups: Map<string, unknown>
     invocationQueue: { clear: (conversationId: string) => void; stopZombieDefense: () => void }
     getConversationTeamId: unknown
     loadAllEnabledProfiles: unknown
@@ -135,6 +136,7 @@ function resetOrchestratorState(): void {
   subject.conversationModes.clear()
   subject.webContentsMap.clear()
   subject.baseConfigs.clear()
+  subject.openFloorCleanups.clear()
   subject.invocationQueue.clear('conv-open-floor')
   subject.invocationQueue.clear('conv-empty')
   subject.invocationQueue.clear('conv-a')
@@ -254,7 +256,7 @@ describe('AgentOrchestrator Open Floor (Daemon architecture)', () => {
     expect(mockDaemon.abortConversation).toHaveBeenCalledWith('conv-open-floor')
   })
 
-  it('forwards agent:thinking events to frontend as agent_thinking', async () => {
+  it('does NOT subscribe to agent:thinking bus events (feature removed)', async () => {
     const webContents = makeWebContents()
 
     await orchestrator.sendUserMessage(
@@ -269,7 +271,11 @@ describe('AgentOrchestrator Open Floor (Daemon architecture)', () => {
       'open_floor'
     )
 
-    // Simulate daemon publishing agent:thinking event
+    // agent:thinking bus subscription was removed — no handler should be registered
+    const handlerCount = mockBus.getHandlerCount('agent:thinking')
+    expect(handlerCount).toBe(0)
+
+    // Publishing agent:thinking should NOT forward to frontend
     mockBus.publish({
       type: 'agent:thinking',
       conversationId: 'conv-open-floor',
@@ -278,16 +284,10 @@ describe('AgentOrchestrator Open Floor (Daemon architecture)', () => {
       payload: { agentName: 'Coder', agentRole: 'coder' },
     })
 
-    expect(webContents.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({
-        type: 'agent_thinking',
-        conversationId: 'conv-open-floor',
-        agentProfileId: 'coder',
-        agentName: 'Coder',
-        agentRole: 'coder',
-      })
+    const thinkingCalls = webContents.send.mock.calls.filter(
+      (call) => call[1]?.type === 'agent_thinking'
     )
+    expect(thinkingCalls).toHaveLength(0)
   })
 
   it('forwards message:reply events to frontend as agent_observation', async () => {
@@ -431,8 +431,12 @@ describe('AgentOrchestrator Open Floor (Daemon architecture)', () => {
       'open_floor'
     )
 
-    const beforeCount = mockBus.getHandlerCount('agent:thinking')
-    expect(beforeCount).toBeGreaterThan(0)
+    // agent:thinking subscription removed — only message:reply and open_floor:closed remain
+    const thinkingCount = mockBus.getHandlerCount('agent:thinking')
+    expect(thinkingCount).toBe(0)
+
+    const replyCount = mockBus.getHandlerCount('message:reply')
+    expect(replyCount).toBeGreaterThan(0)
 
     mockBus.publish({
       type: 'open_floor:closed',
@@ -442,7 +446,6 @@ describe('AgentOrchestrator Open Floor (Daemon architecture)', () => {
       payload: {},
     })
 
-    expect(mockBus.unsubscribe).toHaveBeenCalledWith('agent:thinking', expect.any(Function))
     expect(mockBus.unsubscribe).toHaveBeenCalledWith('message:reply', expect.any(Function))
     expect(mockBus.unsubscribe).toHaveBeenCalledWith('open_floor:closed', expect.any(Function))
   })
@@ -587,5 +590,60 @@ describe('AgentOrchestrator Open Floor (Daemon architecture)', () => {
 
     // Nothing sent to destroyed webContents
     expect(webContents.send).not.toHaveBeenCalled()
+  })
+
+  it('cleans up old bus handlers when restarting open floor in same conversation', async () => {
+    const webContents = makeWebContents()
+
+    // First open floor
+    await orchestrator.sendUserMessage(
+      'conv-open-floor',
+      'coder',
+      'first topic',
+      config,
+      'serial',
+      webContents as never,
+      undefined,
+      undefined,
+      'open_floor'
+    )
+
+    const handlerCountAfterFirst = mockBus.getHandlerCount('message:reply')
+
+    // Manually set state to active to simulate an ongoing discussion
+    const subject = orchestrator as unknown as { openFloorStates: Map<string, { status: string }> }
+    subject.openFloorStates.set('conv-open-floor', { status: 'active' })
+
+    // Second open floor in same conversation — should clean up old handlers
+    await orchestrator.sendUserMessage(
+      'conv-open-floor',
+      'coder',
+      'second topic',
+      config,
+      'serial',
+      webContents as never,
+      undefined,
+      undefined,
+      'open_floor'
+    )
+
+    const handlerCountAfterSecond = mockBus.getHandlerCount('message:reply')
+
+    // Handler count should stay the same (old unsubscribed, new subscribed)
+    expect(handlerCountAfterSecond).toBe(handlerCountAfterFirst)
+
+    // Publishing a reply should only trigger ONE frontend event
+    mockBus.publish({
+      type: 'message:reply',
+      conversationId: 'conv-open-floor',
+      actorType: 'agent',
+      actorId: 'coder',
+      payload: { agentName: 'Coder', content: 'Only once', relevanceScore: 0.9 },
+    })
+
+    const observationCalls = webContents.send.mock.calls.filter(
+      (call) => call[1]?.type === 'agent_observation' && call[1]?.content === 'Only once'
+    )
+    expect(observationCalls).toHaveLength(1)
   })
 })

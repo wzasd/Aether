@@ -7,11 +7,14 @@ import { GeminiOutputParser } from './parsers/gemini-output-parser'
 import { Secrets } from '../../core/secrets'
 
 const GEMINI_META: ProviderMeta = {
-  id: 'gemini-cli',
+  id: 'gemini',
   name: 'Gemini',
   binary: 'gemini',
   vendor: 'Google',
   models: [
+    // default MUST be first — resolveModel falls back to models[0] and
+    // gemini-2.5-pro returns model_not_found from the CLI.
+    { id: 'default', name: 'Default (CLI configured)', contextWindow: 1048576 },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', contextWindow: 1048576 },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', contextWindow: 1048576 }
   ],
@@ -19,7 +22,8 @@ const GEMINI_META: ProviderMeta = {
     manual: [],
     autoEdit: ['--approval-mode', 'auto_edit'],
     plan: ['--approval-mode', 'plan'],
-    fullAuto: ['--approval-mode', 'yolo']
+    fullAuto: ['--approval-mode', 'yolo'],
+    trusted: ['--approval-mode', 'yolo']
   },
   supportsStreamJson: true,
   supportsInteractive: false
@@ -34,17 +38,19 @@ interface GeminiSessionEntry {
   doneEmitted: boolean
 }
 
-export class GeminiCLIProvider extends BaseCLIProvider {
+export class GeminiProvider extends BaseCLIProvider {
   readonly meta = GEMINI_META
 
   private geminiSessions = new Map<string, GeminiSessionEntry>()
 
   protected buildStreamJsonArgs(config: SessionConfig, _resume: boolean): string[] {
-    const args = ['-p', '', '-o', 'stream-json', '--model', config.model]
-
-    const permFlags = this.meta.permissionFlags[config.permissionMode]
-    args.push(...permFlags)
-
+    // Align with Slock: always use --yolo for headless per-turn mode
+    const args = ['-p', '', '--output-format', 'stream-json', '--yolo']
+    // Only pass --model when it's explicitly set and not 'default';
+    // otherwise let the CLI use its configured default model.
+    if (this.shouldPassModelFlag(config.model)) {
+      args.push('--model', config.model)
+    }
     return args
   }
 
@@ -132,7 +138,7 @@ export class GeminiCLIProvider extends BaseCLIProvider {
     }
 
     const env = { ...process.env, ...this.buildEnv() }
-    const binary = this.resolveGeminiBinary()
+    const binary = this.resolveBinary()
 
     const child = spawn(binary, args, {
       cwd: entry.config.workingDir || process.cwd(),
@@ -243,11 +249,5 @@ export class GeminiCLIProvider extends BaseCLIProvider {
 
   override respondQuestion(_sessionId: string, _answer: string): void {
     // Not supported for one-shot Gemini CLI.
-  }
-
-  // ─── Helpers ───────────────────────────────────────────────────
-
-  private resolveGeminiBinary(): string {
-    return this.config?.binaryPath || this.meta.binary
   }
 }

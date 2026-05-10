@@ -2,9 +2,12 @@ import { randomUUID } from 'crypto'
 import { spawn, ChildProcess, execFile } from 'child_process'
 import { EventEmitter } from 'events'
 import { spawn as spawnPty, type IPty } from 'node-pty'
-import type { CLIProvider, SessionConfig, Session, ProviderMeta, ProviderConfig } from '../provider'
+import { existsSync } from 'fs'
+import type { CLIProvider, SessionConfig, Session, ProviderMeta, ProviderConfig, ModelInfo } from '../provider'
 import type { AIEvent } from '../types'
 import type { OutputParser } from './parsers/output-parser'
+import { recordProviderUsage } from '../provider-token-tracker'
+import { writeObservabilityEvent } from '../../core/logging'
 
 type SessionEntry = {
   session: Session
@@ -24,6 +27,10 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
 
   protected sessions = new Map<string, SessionEntry>()
   protected config: ProviderConfig | null = null
+
+  // Cached resolved binary path — probed once in initialize() to avoid
+  // repeated fs.existsSync calls on every sendMessage/startSession.
+  private resolvedBinaryPath: string | null = null
 
   // ─── Abstract (subclass must implement) ──────────────────────
 
@@ -51,6 +58,8 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
 
   async initialize(config: ProviderConfig): Promise<void> {
     this.config = config
+    // Probe and cache the binary path once at initialization time.
+    this.resolvedBinaryPath = this.probeBinaryPath()
   }
 
   async startSession(config: SessionConfig): Promise<Session> {
@@ -129,6 +138,12 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
     }) + '\n'
 
     entry.process.stdin.write(msg)
+    writeObservabilityEvent('runtime:process_stdin', {
+      profileId: this.config?.profileId,
+      runtimeKey: this.meta.id,
+      sessionId,
+      contentLength: content.length
+    })
   }
 
   respondPermission(sessionId: string, approved: boolean): void {
@@ -202,8 +217,81 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
 
   // ─── Helpers ─────────────────────────────────────────────────
 
-  private resolveBinary(): string {
-    return this.config?.binaryPath || this.meta.binary
+  /** List available models for this provider.
+   *  Default: return static meta.models (aligned with Multica — most providers
+   *  don't support dynamic model discovery).
+   *  Subclasses override this for dynamic discovery (e.g. opencode → `opencode models`). */
+  async listModels(): Promise<ModelInfo[]> {
+    const models = this.meta.models
+    writeObservabilityEvent('runtime:models_listed', {
+      profileId: this.config?.profileId,
+      runtimeKey: this.meta.id,
+      modelCount: models.length,
+      source: 'static-meta'
+    })
+    return models
+  }
+
+  /** Resolve the binary path for spawning CLI processes.
+   *  Uses cached path from initialize() — avoids repeated fs.existsSync on every spawn.
+   *  Falls back to live probing if cache is empty (e.g. before initialize). */
+  protected resolveBinary(): string {
+    if (this.resolvedBinaryPath) return this.resolvedBinaryPath
+    // Fallback: probe live (before initialize was called)
+    return this.probeBinaryPath()
+  }
+
+  /** Probe common binary installation paths. Called once in initialize() and cached.
+   *  Priority: user-configured binaryPath > candidate path > bare name.
+   *  Electron apps on macOS have restricted PATH (often missing Homebrew),
+   *  so we probe common installation directories before falling back. */
+  private probeBinaryPath(): string {
+    if (this.config?.binaryPath) return this.config.binaryPath
+
+    const candidates = this.getBinaryCandidates()
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        writeObservabilityEvent('runtime:binary_resolved', {
+          profileId: this.config?.profileId,
+          runtimeKey: this.meta.id,
+          binaryPath: candidate
+        })
+        return candidate
+      }
+    }
+    writeObservabilityEvent('runtime:binary_not_found', {
+      profileId: this.config?.profileId,
+      runtimeKey: this.meta.id,
+      binaryPath: this.meta.binary
+    })
+    return this.meta.binary
+  }
+
+  /** Candidate binary paths for PATH probing. Subclasses override to add
+   *  provider-specific common locations (e.g. ~/.local/bin for Kimi). */
+  protected getBinaryCandidates(): string[] {
+    return [
+      `/opt/homebrew/bin/${this.meta.binary}`,
+      `/usr/local/bin/${this.meta.binary}`,
+    ]
+  }
+
+  /** Whether the model flag should be passed to the CLI.
+   *  Returns true only when model is explicitly set and not 'default'.
+   *  'default' means "let the CLI use its own configured model".
+   *  Subclasses can override for provider-specific matching (e.g. Copilot/Cursor
+   *  sub-model lists), but the base behavior covers the common case. */
+  protected shouldPassModelFlag(model?: string): boolean {
+    const shouldPass = Boolean(model && model !== 'default')
+    if (model) {
+      writeObservabilityEvent('runtime:model_resolved', {
+        profileId: this.config?.profileId,
+        runtimeKey: this.meta.id,
+        modelId: shouldPass ? model : 'default (CLI default)',
+        passModelFlag: shouldPass
+      })
+    }
+    return shouldPass
   }
 
   private resolveEnv(): Record<string, string> {
@@ -221,6 +309,13 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
       cwd: session.config.workingDir || process.cwd(),
       stdio: ['pipe', 'pipe', 'pipe'],
       env
+    })
+
+    writeObservabilityEvent('runtime:process_spawned', {
+      profileId: this.config?.profileId,
+      runtimeKey: this.meta.id,
+      sessionId: session.id,
+      binaryPath: binary
     })
 
     const entry: SessionEntry = {
@@ -250,7 +345,15 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
     })
 
     child.stderr.on('data', (data: Buffer) => {
-      entry.stderr += data.toString()
+      const stderrText = data.toString()
+      entry.stderr += stderrText
+      writeObservabilityEvent('runtime:process_stderr', {
+        profileId: this.config?.profileId,
+        runtimeKey: this.meta.id,
+        sessionId: session.id,
+        stderr: stderrText.slice(0, 500), // Limit to prevent log flood
+        totalStderrLength: entry.stderr.length
+      })
     })
 
     child.on('error', (error) => {
@@ -271,7 +374,6 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
             this.emitSessionEvent(session.id, entry, { type: 'done', id: session.id })
           }
         } else {
-          console.error(`[${this.meta.id}] exit code=${code} signal=${signal} stderr=`, stderr)
           const reason = stderr || `${this.meta.name} process exited unexpectedly (${signal || code || 'unknown'})`
           this.emitTerminalFailure(session.id, entry, reason)
         }
@@ -293,6 +395,14 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
       rows: 40,
       env,
       name: 'xterm-color'
+    })
+
+    writeObservabilityEvent('runtime:process_spawned', {
+      profileId: this.config?.profileId,
+      runtimeKey: this.meta.id,
+      sessionId: session.id,
+      binaryPath: binary,
+      transport: 'pty'
     })
 
     const entry: SessionEntry = {
@@ -369,12 +479,28 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
       entry.session.status = 'running'
     }
 
+    // Track token usage on complete events
+    if (event.type === 'complete' && event.usage) {
+      recordProviderUsage(
+        this.meta.id,
+        event.usage.inputTokens ?? 0,
+        event.usage.outputTokens ?? 0
+      )
+    }
+
     this.emit(`event:${sessionId}`, event)
   }
 
   protected emitTerminalFailure(sessionId: string, entry: SessionEntry, message: string): void {
     if (entry.doneEmitted) return
 
+    writeObservabilityEvent('runtime:terminated', {
+      profileId: this.config?.profileId,
+      runtimeKey: this.meta.id,
+      sessionId,
+      reason: 'crashed',
+      error: message
+    })
     console.error(`[${this.meta.id}] terminal failure:`, message)
     entry.status = 'error'
     entry.session.status = 'error'

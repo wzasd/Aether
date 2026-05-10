@@ -45,7 +45,9 @@ function splitIntoChunks(text: string, size: number): string[] {
 export class OpenCodeOutputParser implements OutputParser {
   private messageId = ''
   private fullText = ''
+  private toolCallNames: string[] = []
   private _sessionId = ''
+  private completeEmitted = false
 
   get sessionId(): string {
     return this._sessionId
@@ -86,12 +88,17 @@ export class OpenCodeOutputParser implements OutputParser {
     }
 
     if (parsed.type === 'tool_use' && parsed.part) {
+      const toolName = parsed.part.tool || 'unknown'
+      const toolInput = parsed.part.state?.input || {}
+      // Track tool call names for fallback complete event (Layer 1 fix)
+      this.toolCallNames.push(toolName)
+
       const events: AIEvent[] = []
       events.push({
         type: 'tool_start',
         toolCallId: parsed.part.callID || parsed.part.id,
-        toolName: parsed.part.tool || 'unknown',
-        toolInput: JSON.stringify(parsed.part.state?.input || {})
+        toolName,
+        toolInput: JSON.stringify(toolInput)
       })
       const output = parsed.part.state?.output || ''
       events.push({
@@ -103,27 +110,73 @@ export class OpenCodeOutputParser implements OutputParser {
       return events
     }
 
-    if (parsed.type === 'step_finish' && parsed.part?.reason === 'stop') {
+    if (parsed.type === 'step_finish') {
       const events: AIEvent[] = []
-      if (this.fullText) {
-        const usage = parsed.part.tokens
-          ? {
-              inputTokens: parsed.part.tokens.input,
-              outputTokens: parsed.part.tokens.output,
-              cacheReadTokens: parsed.part.tokens.cache.read,
-              cacheCreationTokens: parsed.part.tokens.cache.write
-            }
-          : undefined
-        events.push({
-          type: 'complete',
-          id: this.messageId,
-          fullText: this.fullText,
-          usage,
-          costUsd: parsed.part.cost
-        })
+      const reason = parsed.part?.reason || 'stop'
+      const usage = parsed.part?.tokens
+        ? {
+            inputTokens: parsed.part.tokens.input,
+            outputTokens: parsed.part.tokens.output,
+            cacheReadTokens: parsed.part.tokens.cache.read,
+            cacheCreationTokens: parsed.part.tokens.cache.write
+          }
+        : undefined
+
+      if (reason === 'stop' || reason === 'end-turn') {
+        // Terminal step: agent finished its turn (aligned with Slock behavior)
+        if (this.fullText) {
+          events.push({
+            type: 'complete',
+            id: this.messageId,
+            fullText: this.fullText,
+            usage,
+            costUsd: parsed.part?.cost
+          })
+        } else if (this.toolCallNames.length > 0) {
+          // Layer 1 fallback: pure tool calls, no text → emit complete with tool summary
+          const toolSummary = this.toolCallNames
+            .map((name, i) => `${i + 1}. ${name}`)
+            .join('\n')
+          events.push({
+            type: 'complete',
+            id: this.messageId,
+            fullText: `[工具调用完成]\n${toolSummary}`,
+            usage,
+            costUsd: parsed.part?.cost
+          })
+        }
+        this.completeEmitted = true
+        events.push({ type: 'done', id: this.messageId })
+      } else if (reason === 'tool-calls') {
+        // Intermediate step: agent will continue with more tool calls.
+        // Persist any accumulated text before resetting for the next step,
+        // otherwise multi-step text is lost (only last step survives).
+        if (this.fullText) {
+          events.push({
+            type: 'complete',
+            id: this.messageId,
+            fullText: this.fullText,
+            usage,
+            costUsd: parsed.part?.cost
+          })
+        } else if (this.toolCallNames.length > 0) {
+          const toolSummary = this.toolCallNames
+            .map((name, i) => `${i + 1}. ${name}`)
+            .join('\n')
+          events.push({
+            type: 'complete',
+            id: this.messageId,
+            fullText: `[工具调用完成]\n${toolSummary}`,
+            usage,
+            costUsd: parsed.part?.cost
+          })
+        }
+        // Don't emit 'done' — the agent will produce another step after this.
       }
-      events.push({ type: 'done', id: this.messageId })
+
+      // Reset per-step state for the next step
       this.fullText = ''
+      this.toolCallNames = []
       return events
     }
 
@@ -135,12 +188,44 @@ export class OpenCodeOutputParser implements OutputParser {
   }
 
   flush(): AIEvent[] {
-    return []
+    // Fallback: if OpenCode exits cleanly without emitting step_finish
+    // (e.g. v1.14.45 in --format json --pure mode), we still need to
+    // emit complete so the message is persisted. Without this, streaming
+    // text renders briefly then disappears when 'done' clears it.
+    if (this.completeEmitted) return []
+
+    const events: AIEvent[] = []
+    if (this.fullText) {
+      events.push({
+        type: 'complete',
+        id: this.messageId,
+        fullText: this.fullText
+      })
+    } else if (this.toolCallNames.length > 0) {
+      const toolSummary = this.toolCallNames
+        .map((name, i) => `${i + 1}. ${name}`)
+        .join('\n')
+      events.push({
+        type: 'complete',
+        id: this.messageId,
+        fullText: `[工具调用完成]\n${toolSummary}`
+      })
+    }
+    // Always emit 'done' in flush to signal turn end (matches step_finish behavior).
+    // BaseCLIProvider / CursorProvider guards against duplicate 'done' via doneEmitted flag.
+    events.push({ type: 'done', id: this.messageId })
+    // Reset state after flush
+    this.fullText = ''
+    this.toolCallNames = []
+    this.completeEmitted = true
+    return events
   }
 
   beginTurn(): void {
     this.messageId = ''
     this.fullText = ''
+    this.toolCallNames = []
+    this.completeEmitted = false
   }
 
   resolveInteraction(): void {}

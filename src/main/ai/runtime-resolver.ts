@@ -59,7 +59,7 @@ function resolveProvider(
   }
 
   // Priority 4: System default
-  const defaultProvider = providerRegistry.get('claude-cli')
+  const defaultProvider = providerRegistry.get('claude')
   if (defaultProvider) return defaultProvider
 
   // Fallback: any available provider

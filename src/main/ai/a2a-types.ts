@@ -118,6 +118,8 @@ export interface AgentProfile {
   capabilities?: string[]
   whenToUse?: string
   outputContract?: string
+  customEnv?: Record<string, string>
+  customArgs?: string[]
 }
 
 // ─── Layer 1: Intent ─────────────────────────────────────────────────────────

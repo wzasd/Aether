@@ -212,7 +212,7 @@ export interface UsageEvent {
   usage: UsageInfo
 }
 
-/** 配置选项更新（来自 ACP config_option_update） */
+/** 配置选项更新 */
 export interface ConfigOptionUpdateEvent {
   type: 'config_option_update'
   configOptions: Array<{
@@ -226,7 +226,7 @@ export interface ConfigOptionUpdateEvent {
   }>
 }
 
-/** 模型列表更新（来自 ACP session/new 或 session/update） */
+/** 模型列表更新 */
 export interface ModelsUpdateEvent {
   type: 'models_update'
   models: Array<{ id: string; name: string; contextWindow: number }>

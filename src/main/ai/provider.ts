@@ -7,6 +7,7 @@ export interface PermissionFlagMap {
   autoEdit: string[]
   plan: string[]
   fullAuto: string[]
+  trusted: string[]
 }
 
 // ─── Model Info ───
@@ -20,7 +21,6 @@ export interface ModelInfo {
 
 // ─── Provider Meta ───
 
-export type RuntimeType = 'cli' | 'acp' | 'cloud'
 
 export interface ProviderMeta {
   id: string
@@ -31,8 +31,6 @@ export interface ProviderMeta {
   permissionFlags: PermissionFlagMap
   supportsStreamJson: boolean
   supportsInteractive: boolean
-  /** Runtime type classification (Phase 5: ACP support) */
-  runtimeType?: RuntimeType
 }
 
 // ─── Provider Config (non-sensitive, stored in DB) ───
@@ -95,12 +93,8 @@ export interface CLIProvider {
   onEvent(sessionId: string, handler: (event: AIEvent) => void): void
   offEvent(sessionId: string, handler: (event: AIEvent) => void): void
 
-  /** Dynamic model list from the running agent (ACP). Returns empty if unsupported. */
   getAvailableModels?(sessionId: string): ModelInfo[]
-  /** Switch the active model mid-session (ACP). No-op for non-ACP providers. */
   setModel?(sessionId: string, modelId: string): Promise<void>
-  /** Config options exposed by the agent backend (ACP config_option_update). */
   getConfigOptions?(sessionId: string): ConfigOption[] | null
-  /** Set a config option value (ACP setSessionConfigOption). */
   setConfigOption?(sessionId: string, optionId: string, value: string): Promise<void>
 }

@@ -17,7 +17,7 @@ import { ReflowOrchestrator } from './reflow-orchestrator'
 import { A2AMemoryDistiller } from './a2a-memory-distiller'
 import { writeObservabilityEvent } from '../core/logging'
 import { daemon } from '../daemon/daemon'
-import { bus } from '../daemon/event-bus'
+import { bus, type BusHandler } from '../daemon/event-bus'
 
 // Layer 1
 import { parseIntents } from './intent-parser'
@@ -87,6 +87,13 @@ class AgentOrchestrator {
   private conversationModes: Map<string, CollaborationMode> = new Map()
   // AbortControllers for open floor discussions — keyed by conversationId
   private openFloorControllers: Map<string, AbortController> = new Map()
+  // Bus handler cleanups for open floor — prevents duplicate event forwarding
+  // when a new discussion starts before the previous one completes.
+  private openFloorCleanups: Map<string, () => void> = new Map()
+  // Tracks all active bus subscriptions keyed by `conversationId:eventType`.
+  // Used by subscribeBus() for auto-cleanup and by cleanupAllBusSubscriptions()
+  // for bulk disposal.
+  private busSubscriptions = new Map<string, Array<{ eventType: string; handler: BusHandler }>>()
 
   constructor() {
     // Start reflow timeout guard
@@ -177,6 +184,15 @@ class AgentOrchestrator {
         daemon.abortConversation(conversationId)
       }
 
+      // Clean up leaked bus handlers from previous sendUserMessage calls.
+      // Without this, old replyHandlers remain subscribed and cause duplicate
+      // agent_observation events to be forwarded to the frontend.
+      const oldCleanup = this.openFloorCleanups.get(conversationId)
+      if (oldCleanup) {
+        oldCleanup()
+        this.openFloorCleanups.delete(conversationId)
+      }
+
       this.baseConfigs.set(conversationId, sessionConfig)
 
       // Build conversation context
@@ -195,22 +211,6 @@ class AgentOrchestrator {
         skippedAgents: [],
       }
       this.openFloorStates.set(conversationId, state)
-
-      // Subscribe to agent thinking via EventBus
-      const thinkingHandler = (event: { type: string; conversationId: string; actorType: string; actorId: string | null; payload: unknown }): void => {
-        if (event.type !== 'agent:thinking' || event.conversationId !== conversationId) return
-        const payload = event.payload as { agentName: string; agentRole?: string }
-        if (!webContents.isDestroyed()) {
-          webContents.send('ai:event', {
-            type: 'agent_thinking',
-            conversationId,
-            agentProfileId: event.actorId,
-            agentName: payload.agentName,
-            agentRole: payload.agentRole,
-          })
-        }
-      }
-      bus.subscribe('agent:thinking', thinkingHandler)
 
       // Subscribe to agent replies via EventBus for state tracking
       const replyHandler = (event: { type: string; conversationId: string; actorType: string; actorId: string | null; payload: unknown }): void => {
@@ -241,9 +241,8 @@ class AgentOrchestrator {
       // Listen for open_floor completion via EventBus
       const completeHandler = (event: { type: string; conversationId: string; actorType: string; actorId: string | null; payload: unknown }): void => {
         if (event.type !== 'open_floor:closed' || event.conversationId !== conversationId) return
-        bus.unsubscribe('agent:thinking', thinkingHandler)
-        bus.unsubscribe('message:reply', replyHandler)
-        bus.unsubscribe('open_floor:closed', completeHandler)
+        cleanup()
+        this.openFloorCleanups.delete(conversationId)
         state.status = 'closed'
         state.endTime = Date.now()
         if (!webContents.isDestroyed()) {
@@ -256,6 +255,13 @@ class AgentOrchestrator {
         }
       }
       bus.subscribe('open_floor:closed', completeHandler)
+
+      // Centralized cleanup so abort/restart/complete all unsubscribe consistently.
+      const cleanup = (): void => {
+        bus.unsubscribe('message:reply', replyHandler)
+        bus.unsubscribe('open_floor:closed', completeHandler)
+      }
+      this.openFloorCleanups.set(conversationId, cleanup)
 
       return
     }
@@ -392,6 +398,62 @@ class AgentOrchestrator {
         this.runtimes.delete(key)
       }
     })
+    // Clean up all bus subscriptions for this conversation
+    this.cleanupBusSubscriptions(conversationId)
+  }
+
+  /**
+   * Subscribe to an EventBus event with automatic cleanup of previous handlers
+   * for the same conversationId+eventType combination. This prevents handler
+   * leaks when a new open_floor discussion starts before the previous one completes.
+   *
+   * All subscriptions are tracked in `busSubscriptions` so they can be bulk-cleaned
+   * via `cleanupBusSubscriptions()` or `cleanupAllBusSubscriptions()`.
+   */
+  private subscribeBus(
+    conversationId: string,
+    eventType: string,
+    handler: BusHandler
+  ): void {
+    const key = `${conversationId}:${eventType}`
+    const existing = this.busSubscriptions.get(key)
+    if (existing) {
+      // Auto-cleanup: unsubscribe previous handlers for the same key
+      for (const sub of existing) {
+        bus.unsubscribe(sub.eventType as any, sub.handler)
+      }
+    }
+    bus.subscribe(eventType as any, handler)
+    this.busSubscriptions.set(key, [{ eventType, handler }])
+  }
+
+  /**
+   * Unsubscribe all bus handlers for a specific conversation.
+   * Called on abort, open_floor close, and restart.
+   */
+  private cleanupBusSubscriptions(conversationId: string): void {
+    const prefix = `${conversationId}:`
+    for (const [key, subs] of this.busSubscriptions) {
+      if (key.startsWith(prefix)) {
+        for (const sub of subs) {
+          bus.unsubscribe(sub.eventType as any, sub.handler)
+        }
+        this.busSubscriptions.delete(key)
+      }
+    }
+  }
+
+  /**
+   * Unsubscribe ALL bus handlers across all conversations.
+   * Used for full orchestrator disposal.
+   */
+  private cleanupAllBusSubscriptions(): void {
+    for (const [, subs] of this.busSubscriptions) {
+      for (const sub of subs) {
+        bus.unsubscribe(sub.eventType as any, sub.handler)
+      }
+    }
+    this.busSubscriptions.clear()
   }
 
   respondPermission(conversationId: string, approved: boolean, profileId: string, taskId?: string): void {
@@ -858,6 +920,13 @@ class AgentOrchestrator {
     if (state && state.status === 'active') {
       state.status = 'closing'
 
+      // Clean up bus handlers so stale subscriptions don't leak
+      const cleanup = this.openFloorCleanups.get(conversationId)
+      if (cleanup) {
+        cleanup()
+        this.openFloorCleanups.delete(conversationId)
+      }
+
       // Abort the AbortController so Promise.race resolves early and
       // each agent's promise loop exits at the next check point
       const controller = this.openFloorControllers.get(conversationId)
@@ -1139,7 +1208,7 @@ class AgentOrchestrator {
       writeObservabilityEvent('runtime:started', { taskId: task.id, conversationId, profileId: profile.id, runtimeKey: key })
       const sessionIdAtStart = runtime.sessionId
 
-      // ACP protocol leverage: ensure the correct model is loaded.
+      // Ensure the correct model is loaded.
       // Switch to the resolved model (honoring task/member overrides) rather
       // than the profile default, so task-level model selection is respected.
       const resolvedModel = runtimeOverrides?.model ?? profile.model
@@ -1147,7 +1216,7 @@ class AgentOrchestrator {
         try {
           await runtime.switchModel(resolvedModel)
         } catch {
-          // Non-ACP providers may not support dynamic model switching
+          // Provider may not support dynamic model switching
         }
       }
 

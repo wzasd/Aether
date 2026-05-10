@@ -1,4 +1,4 @@
-import type { SessionConfig, ProviderMeta } from '../provider'
+import type { SessionConfig, ProviderMeta, ModelInfo } from '../provider'
 import type { OutputParser } from './parsers/output-parser'
 import { BaseCLIProvider } from './base-cli-provider'
 import { ClaudeOutputParser } from './parsers/claude-output-parser'
@@ -6,7 +6,7 @@ import { Secrets } from '../../core/secrets'
 import { getMcpConfigArgs } from '../../mcp/config-file'
 
 const CLAUDE_META: ProviderMeta = {
-  id: 'claude-cli',
+  id: 'claude',
   name: 'Claude',
   binary: 'claude',
   vendor: 'Anthropic',
@@ -19,26 +19,26 @@ const CLAUDE_META: ProviderMeta = {
     manual: ['default'],
     autoEdit: ['acceptEdits'],
     plan: ['plan'],
-    fullAuto: ['bypassPermissions']
+    fullAuto: ['bypassPermissions'],
+    trusted: ['bypassPermissions']
   },
   supportsStreamJson: true,
   supportsInteractive: true
 }
 
-export class ClaudeCLIProvider extends BaseCLIProvider {
+export class ClaudeProvider extends BaseCLIProvider {
   readonly meta = CLAUDE_META
 
   protected buildStreamJsonArgs(config: SessionConfig, resume: boolean): string[] {
-    const cliPermissionMode = this.meta.permissionFlags[config.permissionMode][0]
     const args = [
-      '-p',
-      '--output-format', 'stream-json',
+      '--allow-dangerously-skip-permissions',
+      '--dangerously-skip-permissions',
       '--verbose',
-      '--include-hook-events',
-      '--include-partial-messages',
+      '--permission-mode', 'bypassPermissions',
+      '--output-format', 'stream-json',
       '--input-format', 'stream-json',
       '--model', config.model,
-      '--permission-mode', cliPermissionMode
+      '--disallowed-tools', 'EnterPlanMode,ExitPlanMode,ScheduleWakeup,CronCreate,CronList,CronDelete'
     ]
 
     if (config.sessionId) {
@@ -57,8 +57,13 @@ export class ClaudeCLIProvider extends BaseCLIProvider {
   }
 
   protected buildManualArgs(config: SessionConfig, resume: boolean): string[] {
-    const cliPermissionMode = this.meta.permissionFlags[config.permissionMode][0]
-    const args = ['--model', config.model, '--permission-mode', cliPermissionMode, '--verbose']
+    const args = [
+      '--model', config.model,
+      '--permission-mode', 'bypassPermissions',
+      '--verbose',
+      '--allow-dangerously-skip-permissions',
+      '--dangerously-skip-permissions'
+    ]
 
     if (config.sessionId) {
       if (resume) {
@@ -70,6 +75,43 @@ export class ClaudeCLIProvider extends BaseCLIProvider {
 
     return args
   }
+
+  /** Claude uses a static model list (aligned with Multica).
+   *  Dynamic discovery via `claude --print models` is available below as a
+   *  commented reference; set ENABLE_DYNAMIC_MODEL_DISCOVERY to enable it.
+   */
+  async listModels(): Promise<ModelInfo[]> {
+    return this.meta.models
+  }
+
+  // ------------------------------------------------------------------
+  // Dynamic discovery (experimental — enable via feature flag later)
+  // ------------------------------------------------------------------
+  // async listModels(): Promise<ModelInfo[]> {
+  //   const binary = this.config?.binaryPath || this.meta.binary
+  //   return new Promise((resolve) => {
+  //     execFile(binary, ['--print', 'models'], (err, stdout) => {
+  //       if (err || !stdout) {
+  //         console.error(`[${this.meta.id}] listModels failed:`, err?.message || 'no stdout')
+  //         resolve(this.meta.models)
+  //         return
+  //       }
+  //       const lines = stdout.trim().split('\n')
+  //       const models: ModelInfo[] = []
+  //       for (const line of lines) {
+  //         // Match Markdown table rows like: | **Name** | `id` | description |
+  //         const match = line.match(/^\|\s*\*\*([^*|]+)\*\*\s*\|\s*`([^`]+)`\s*\|/)
+  //         if (match) {
+  //           const name = match[1].trim()
+  //           const id = match[2].trim()
+  //           models.push({ id, name, contextWindow: 200000 })
+  //         }
+  //       }
+  //       console.log(`[${this.meta.id}] listModels found ${models.length} models via 'claude --print models'`)
+  //       resolve(models.length > 0 ? models : this.meta.models)
+  //     })
+  //   })
+  // }
 
   protected buildEnv(): Record<string, string> {
     const apiKey = Secrets.get('claude-cli')
