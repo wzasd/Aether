@@ -125,4 +125,11 @@ export class ClaudeProvider extends BaseCLIProvider {
   protected createParser(transport: 'stream-json' | 'pty', sessionId: string): OutputParser {
     return new ClaudeOutputParser(transport, sessionId)
   }
+
+  /** Claude CLI requires UUID format for --resume / --session-id.
+   *  Reject OpenCode-style IDs like `oc-mozewl23-d4ql8k`. */
+  protected isValidSessionId(sessionId: string): boolean {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    return UUID_RE.test(sessionId)
+  }
 }

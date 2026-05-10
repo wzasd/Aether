@@ -74,6 +74,12 @@ export class KimiProvider extends BaseCLIProvider {
     return new KimiOutputParser()
   }
 
+  /** Kimi uses UUID-format session IDs. Reject OpenCode-style `oc-` IDs. */
+  protected isValidSessionId(sessionId: string): boolean {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    return UUID_RE.test(sessionId)
+  }
+
   // ─── Dynamic model discovery (aligned with Slock) ──────────────
 
   async listModels(): Promise<ModelInfo[]> {

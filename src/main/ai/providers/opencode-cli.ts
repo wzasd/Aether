@@ -220,6 +220,12 @@ export class OpenCodeProvider extends BaseCLIProvider {
     return new OpenCodeOutputParser()
   }
 
+  /** OpenCode session IDs use `oc-` prefix format (e.g. `oc-mozewl23-d4ql8k`).
+   *  Reject UUID-format IDs from other providers. */
+  protected isValidSessionId(sessionId: string): boolean {
+    return sessionId.startsWith('oc-')
+  }
+
   async listModels(): Promise<ModelInfo[]> {
     const binary = this.resolveBinary()
     return new Promise((resolve) => {

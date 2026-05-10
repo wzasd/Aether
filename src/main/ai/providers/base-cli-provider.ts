@@ -44,6 +44,15 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
     return []
   }
 
+  /** Validate whether a session ID is compatible with this provider.
+   *  Prevents cross-provider session ID pollution (e.g. OpenCode's `oc-xxx`
+   *  format being passed to Claude's `--resume` which requires UUID).
+   *  Subclasses override to enforce provider-specific formats. */
+  protected isValidSessionId(sessionId: string): boolean {
+    // Default: accept any non-empty string (backward compatible)
+    return Boolean(sessionId)
+  }
+
   // ─── Public ──────────────────────────────────────────────────
 
   async detect(): Promise<string | null> {
@@ -75,8 +84,11 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
       }
     }
 
-    const resumeExistingSession = Boolean(config.sessionId)
-    const sessionId = config.sessionId || randomUUID()
+    // Validate session ID format — prevent cross-provider pollution
+    // (e.g. OpenCode's `oc-xxx` ID passed to Claude's `--resume` which requires UUID)
+    const providedSessionId = config.sessionId
+    const resumeExistingSession = Boolean(providedSessionId) && this.isValidSessionId(providedSessionId!)
+    const sessionId = resumeExistingSession ? providedSessionId! : randomUUID()
     const sessionConfig = { ...config, sessionId }
     const session: Session = {
       id: sessionId,

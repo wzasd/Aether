@@ -78,6 +78,12 @@ export class CursorProvider extends BaseCLIProvider {
     return new ClaudeOutputParser('stream-json', '')
   }
 
+  /** Cursor uses UUID-format session IDs. Reject OpenCode-style `oc-` IDs. */
+  protected isValidSessionId(sessionId: string): boolean {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    return UUID_RE.test(sessionId)
+  }
+
   // ─── Session lifecycle (per-turn, like OpenCode) ────────────────
 
   override async startSession(config: SessionConfig): Promise<Session> {
