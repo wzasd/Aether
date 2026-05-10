@@ -389,7 +389,7 @@ export function buildConversationContext(conversationId: string, tokenBudget: nu
   // Walk from most recent backward to fill budget, then reverse for display
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i]
-    const label = t.role === 'user' ? 'User' : (t.agentProfileId ? `@Agent` : 'Assistant')
+    const label = t.role === 'user' ? 'User' : `@${getAgentName(t.agentProfileId)}`
     const line = `${label}: ${t.content.slice(0, 1500)}`
     const cost = estimateTokens(line)
     if (used + cost > historyBudget) break
@@ -530,6 +530,21 @@ function getAgentRole(agentProfileId: string | null): string | null {
   return row?.role ?? null
 }
 
+/** Resolve agent profile ID to human-readable name, with in-process cache. */
+const agentNameCache = new Map<string, string>()
+function getAgentName(agentProfileId: string | null): string {
+  if (!agentProfileId) return 'Assistant'
+  const cached = agentNameCache.get(agentProfileId)
+  if (cached) return cached
+  const db = getDb()
+  const row = db
+    .prepare('SELECT name FROM agent_profile_configs WHERE id = ?')
+    .get(agentProfileId) as { name: string } | undefined
+  const name = row?.name ?? agentProfileId
+  agentNameCache.set(agentProfileId, name)
+  return name
+}
+
 function buildReason(kwScore: number, recScore: number, roleScore: number): string {
   const parts: string[] = []
   if (kwScore > 0.3) parts.push('关键词匹配')
@@ -623,7 +638,7 @@ export function renderContextPacket(packet: AgentContextPacket): string {
     sections.push('')
     sections.push('[RELEVANT CONTEXT]')
     for (const msg of packet.relevantMessages) {
-      const agentLabel = msg.agentProfileId ? `[Agent]` : '[Assistant]'
+      const agentLabel = `[@${getAgentName(msg.agentProfileId)}]`
       const teaser = msg.content.slice(0, 300)
       sections.push(`${agentLabel} ${teaser}`)
     }

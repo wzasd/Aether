@@ -308,16 +308,29 @@ export class TaskQueue {
   /** Get conversation history for Agent context (newest first, limited).
    *  Returns formatted messages suitable for LLM prompt injection.
    *  Each entry includes agent/role, message/result, and timestamp. */
+  /** Resolve agent profile ID to human-readable name, with in-process cache. */
+  private agentNameCache = new Map<string, string>()
+  private getAgentName(agentProfileId: string): string {
+    const cached = this.agentNameCache.get(agentProfileId)
+    if (cached) return cached
+    const row = this.getDb()
+      .prepare('SELECT name FROM agent_profile_configs WHERE id = ?')
+      .get(agentProfileId) as { name: string } | undefined
+    const name = row?.name ?? agentProfileId
+    this.agentNameCache.set(agentProfileId, name)
+    return name
+  }
+
   getConversationHistory(conversationId: string, limit: number = 50): string[] {
     const tasks = this.getConversationTasks(conversationId)
     const entries: string[] = []
 
     for (const task of tasks) {
       // Original message/task
-      entries.push(`[${task.agentProfileId}] ${task.message}`)
+      entries.push(`[@${this.getAgentName(task.agentProfileId)}] ${task.message}`)
       // Result if completed
       if (task.result && task.result !== '[NO_REPLY]') {
-        entries.push(`[${task.agentProfileId}]: ${task.result}`)
+        entries.push(`[@${this.getAgentName(task.agentProfileId)}]: ${task.result}`)
       }
     }
 
