@@ -42,10 +42,27 @@ function splitIntoChunks(text: string, size: number): string[] {
   return chunks
 }
 
+/** FR-5.2: Build fallback summary when agent produces only tool calls with no text.
+ *  Includes tool names + first 100 chars of last tool result for context. */
+const FALLBACK_RESULT_MAX_LENGTH = 100
+
+function buildFallbackSummary(toolCallNames: string[], lastToolResult: string): string {
+  const toolSummary = toolCallNames
+    .map((name, i) => `${i + 1}. ${name}`)
+    .join('\n')
+
+  const resultPreview = lastToolResult
+    ? `\n\n结果摘要：${lastToolResult.slice(0, FALLBACK_RESULT_MAX_LENGTH)}${lastToolResult.length > FALLBACK_RESULT_MAX_LENGTH ? '...' : ''}`
+    : ''
+
+  return `已执行 ${toolCallNames.length} 次工具调用：\n${toolSummary}${resultPreview}`
+}
+
 export class OpenCodeOutputParser implements OutputParser {
   private messageId = ''
   private fullText = ''
   private toolCallNames: string[] = []
+  private lastToolResult: string = ''
   private _sessionId = ''
   private completeEmitted = false
 
@@ -101,6 +118,10 @@ export class OpenCodeOutputParser implements OutputParser {
         toolInput: JSON.stringify(toolInput)
       })
       const output = parsed.part.state?.output || ''
+      // Track last tool result for FR-5.2 fallback summary
+      if (output) {
+        this.lastToolResult = output
+      }
       events.push({
         type: 'tool_result',
         toolCallId: parsed.part.callID || parsed.part.id,
@@ -134,13 +155,10 @@ export class OpenCodeOutputParser implements OutputParser {
           })
         } else if (this.toolCallNames.length > 0) {
           // Layer 1 fallback: pure tool calls, no text → emit complete with tool summary
-          const toolSummary = this.toolCallNames
-            .map((name, i) => `${i + 1}. ${name}`)
-            .join('\n')
           events.push({
             type: 'complete',
             id: this.messageId,
-            fullText: `[工具调用完成]\n${toolSummary}`,
+            fullText: buildFallbackSummary(this.toolCallNames, this.lastToolResult),
             usage,
             costUsd: parsed.part?.cost
           })
@@ -160,13 +178,10 @@ export class OpenCodeOutputParser implements OutputParser {
             costUsd: parsed.part?.cost
           })
         } else if (this.toolCallNames.length > 0) {
-          const toolSummary = this.toolCallNames
-            .map((name, i) => `${i + 1}. ${name}`)
-            .join('\n')
           events.push({
             type: 'complete',
             id: this.messageId,
-            fullText: `[工具调用完成]\n${toolSummary}`,
+            fullText: buildFallbackSummary(this.toolCallNames, this.lastToolResult),
             usage,
             costUsd: parsed.part?.cost
           })
@@ -177,6 +192,7 @@ export class OpenCodeOutputParser implements OutputParser {
       // Reset per-step state for the next step
       this.fullText = ''
       this.toolCallNames = []
+      this.lastToolResult = ''
       return events
     }
 
@@ -202,13 +218,10 @@ export class OpenCodeOutputParser implements OutputParser {
         fullText: this.fullText
       })
     } else if (this.toolCallNames.length > 0) {
-      const toolSummary = this.toolCallNames
-        .map((name, i) => `${i + 1}. ${name}`)
-        .join('\n')
       events.push({
         type: 'complete',
         id: this.messageId,
-        fullText: `[工具调用完成]\n${toolSummary}`
+        fullText: buildFallbackSummary(this.toolCallNames, this.lastToolResult)
       })
     }
     // Always emit 'done' in flush to signal turn end (matches step_finish behavior).
@@ -217,6 +230,7 @@ export class OpenCodeOutputParser implements OutputParser {
     // Reset state after flush
     this.fullText = ''
     this.toolCallNames = []
+    this.lastToolResult = ''
     this.completeEmitted = true
     return events
   }
@@ -225,6 +239,7 @@ export class OpenCodeOutputParser implements OutputParser {
     this.messageId = ''
     this.fullText = ''
     this.toolCallNames = []
+    this.lastToolResult = ''
     this.completeEmitted = false
   }
 
