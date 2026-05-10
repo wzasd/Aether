@@ -86,7 +86,7 @@ export class AgentRuntime extends EventEmitter {
       try {
         const memoryContent = await agentMemory.load(this.profile.id)
         if (memoryContent) {
-          systemPromptParts.push(`## 你的持久记忆\n\n以下是你在过往对话中积累的知识。请将其作为参考，但不要逐字复述：\n\n${memoryContent}`)
+          systemPromptParts.push(`## 你的持久记忆\n\n以下是你在过往对话中积累的知识。请将其作为参考，但不要逐字复述：\n\n${memoryContent}\n\n**注意**：当上下文因 token 限制被压缩时，MEMORY.md 是唯一保留的恢复锚点。在完成重要工作后，主动更新 MEMORY.md 记录关键决策和上下文，确保后续会话能从记忆恢复。`)
           console.debug(`[AgentRuntime] ${this.profile.name}: memory injected (${memoryContent.length} chars)`)
         } else {
           await agentMemory.initialize(this.profile.id, {
@@ -295,20 +295,124 @@ ${toolDescs}`
     }
   }
 
-  /** Wait for the next complete/done/error event on a session. */
+  /** Wait for the next complete/done/error event on a session.
+   *  Returns accumulated pure text (excluding tool-call XML), matching
+   *  Slock's block-level separation of text vs tool_use content.
+   *  Includes a 5-minute timeout to prevent infinite hangs if the CLI
+   *  process stops emitting events. */
   private waitForReply(sessionId: string): Promise<string> {
+    const REPLY_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+
     return new Promise<string>((resolve) => {
+      let settled = false
+      let accumulatedText = ''
+      const safeResolve = (value: string): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeoutHandle)
+        aiEngine.offEvent(sessionId, handler)
+        resolve(value)
+      }
+
       const handler = (event: AIEvent): void => {
-        if (event.type === 'complete' && event.fullText) {
+        // Accumulate text deltas (skip tool-call XML)
+        if (event.type === 'text_delta' && event.delta) {
+          accumulatedText += event.delta
+        }
+        if (event.type === 'complete') {
           aiEngine.offEvent(sessionId, handler)
-          resolve(event.fullText as string)
+          // Use accumulated text if available; fall back to fullText
+          safeResolve(accumulatedText || (event.fullText as string) || '')
         }
         if (event.type === 'done' || event.type === 'error') {
           aiEngine.offEvent(sessionId, handler)
-          resolve('')
+          safeResolve(accumulatedText)
         }
       }
       aiEngine.onEvent(sessionId, handler)
+
+      const timeoutHandle = setTimeout(() => {
+        console.warn(`[AgentRuntime] ${this.profile.name} waitForReply timed out after ${REPLY_TIMEOUT_MS / 1000}s`)
+        safeResolve(accumulatedText)
+      }, REPLY_TIMEOUT_MS)
+    })
+  }
+
+  /** Wait for the next complete reply while streaming text_delta events to the bus.
+   *  Emits `agent:stream` events for each delta so the frontend can render
+   *  partial output in real time.
+   *  Includes a 5-minute timeout to prevent infinite hangs if the CLI
+   *  process stops emitting events.
+   *
+   *  **Slock-aligned fix**: Only accumulates and streams pure text content,
+   *  not tool-call XML. When the LLM emits tool calls (e.g. `<invoke>` XML
+   *  or `tool_start` events), those deltas are suppressed from the stream
+   *  and not included in the final reply. This matches Slock's block-level
+   *  separation where `kind: "text"` and `kind: "tool_call"` are distinct. */
+  private waitForReplyWithStreaming(sessionId: string, conversationId: string): Promise<string> {
+    const REPLY_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+
+    return new Promise<string>((resolve) => {
+      let settled = false
+      let accumulatedText = '' // Pure text only — excludes tool-call XML
+      let insideToolCall = false // Track whether we're inside a tool_use block
+      const safeResolve = (value: string): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeoutHandle)
+        aiEngine.offEvent(sessionId, handler)
+        resolve(value)
+      }
+
+      const handler = (event: AIEvent): void => {
+        // Track tool call boundaries — suppress streaming inside tool calls
+        if (event.type === 'tool_start') {
+          insideToolCall = true
+          return
+        }
+        if (event.type === 'tool_result') {
+          insideToolCall = false
+          return
+        }
+
+        // Stream partial text to the bus for real-time rendering
+        // Only stream if we're NOT inside a tool call block
+        if (event.type === 'text_delta' && event.delta && !insideToolCall) {
+          accumulatedText += event.delta
+          this.emit('stream', {
+            type: 'agent:stream',
+            conversationId,
+            agentProfileId: this.profile.id,
+            agentName: this.profile.name,
+            delta: event.delta,
+          })
+        }
+
+        // On complete: return accumulated pure text, NOT fullText
+        // (fullText may contain tool-call XML that we don't want in the reply)
+        if (event.type === 'complete') {
+          // Reset insideToolCall in case tool_result was never emitted (CLI crash)
+          insideToolCall = false
+          // If we accumulated text via text_delta, use that (pure text only).
+          // Fall back to fullText only if no deltas were received (edge case
+          // for providers that emit complete without text_delta).
+          const reply = accumulatedText || (event.fullText as string) || ''
+          safeResolve(reply)
+        }
+        if (event.type === 'done' || event.type === 'error') {
+          insideToolCall = false
+          safeResolve(accumulatedText)
+        }
+      }
+
+      // Register handler BEFORE sending the message to prevent the race
+      // condition where CLI events arrive before the handler is attached.
+      aiEngine.onEvent(sessionId, handler)
+
+      const timeoutHandle = setTimeout(() => {
+        console.warn(`[AgentRuntime] ${this.profile.name} reply timed out after ${REPLY_TIMEOUT_MS / 1000}s`)
+        safeResolve(accumulatedText)
+      }, REPLY_TIMEOUT_MS)
     })
   }
 
@@ -333,9 +437,8 @@ ${toolDescs}`
     }
     systemPromptParts.push(OPEN_FLOOR_INSTRUCTION)
 
-    // Inject tool definitions if available
     const hasTools = obs.tools && obs.tools.length > 0
-    const toolPrompt = this.buildToolPrompt(obs.tools)
+    const toolPrompt = hasTools ? this.buildToolPrompt(obs.tools) : ''
     if (toolPrompt) {
       systemPromptParts.push(toolPrompt)
     }
@@ -349,7 +452,12 @@ ${toolDescs}`
           return `@${a.name} (${a.role}): ${capabilities} — ${whenToUse}`
         })
         .join('\n')
-      systemPromptParts.push(`其他参与者：\n${agentCards}\n\n如果需要追问特定 Agent，可以 @AgentName: 你的问题`)
+      systemPromptParts.push(
+        `其他参与者（你可以看到他们的所有发言）：\n${agentCards}\n\n` +
+        `重要：这是一个群聊环境，所有人的消息你都能看到。` +
+        `不需要说"我看不到其他 Agent 的回复"——你在上下文中直接就能看到。` +
+        `如果需要让某个 Agent 特别注意到某件事，可以在消息里 @AgentName: 你的问题`
+      )
     }
 
     const fullConfig: SessionConfig = {
@@ -360,22 +468,18 @@ ${toolDescs}`
       appendSystemPrompt: systemPromptParts.join('\n\n'),
     }
 
-    // Build message content — with tools, skip context pre-injection
+    // Build message content — always pre-inject recent context so the agent
+    // can see peer messages even if it doesn't use the readMessages tool.
     const messageParts: string[] = []
-    if (!hasTools) {
-      // Fallback: pre-inject context when no tools available
-      const contextText = obs.context
-        .map((m) => `[${m.role}]: ${m.content}`)
-        .join('\n')
-      if (contextText) {
-        messageParts.push(`## 讨论上下文\n\n${contextText}`)
-      }
+    const contextText = obs.context
+      .map((m) => `[${m.role}]: ${m.content}`)
+      .join('\n')
+    if (contextText) {
+      messageParts.push(`## 讨论上下文\n\n${contextText}`)
     }
     messageParts.push(
       `## 当前话题\n\n${obs.message}`,
-      hasTools
-        ? `\n你是 @${this.profile.name}，团队的 ${this.profile.role}。大家在聊上面的话题。如果不确定完整上下文，可以先调用 readMessages 工具查看历史，然后再发表你的看法。像平时群里聊天一样，不用太正式。`
-        : `\n你是 @${this.profile.name}，团队的 ${this.profile.role}。大家在聊上面的话题，你也说说你的想法吧——像平时群里聊天一样，不用太正式。`
+      `\n你是 @${this.profile.name}，团队的 ${this.profile.role}。上面的讨论上下文中包含了所有参与者的发言——你可以直接看到每个人的观点。像平时群里聊天一样发表你的看法，不用太正式。`
     )
     const messageContent = messageParts.join('\n---\n\n')
 
@@ -384,15 +488,22 @@ ${toolDescs}`
     try {
       let toolCallCount = 0
       let lastReply = ''
+      let lastToolResult = '' // Track last tool result for fallback summary
 
-      // Send initial message
+      // Register event handler BEFORE sending the message to prevent the race
+      // condition where CLI events arrive before waitForReplyWithStreaming
+      // attaches its handler. The first iteration awaits the reply promise
+      // first, then sends the initial message; subsequent iterations send
+      // tool result messages at the end of the loop body.
+      let replyPromise = this.waitForReplyWithStreaming(tempSession.id, obs.conversationId)
       aiEngine.sendMessage(tempSession.id, messageContent)
 
       // toolCallCount tracks how many tool calls have been EXECUTED.
       // Entry: 0→1→2→3→4 each execute; entry=5 hits >=MAX_TOOL_CALLS and blocks the 6th.
       // So MAX_TOOL_CALLS=5 allows exactly 5 tool calls.
+      // XML tool_call parse/execute loop
       while (toolCallCount <= MAX_TOOL_CALLS) {
-        const reply = await this.waitForReply(tempSession.id)
+        const reply = await replyPromise
         if (!reply) break
 
         lastReply = reply
@@ -408,6 +519,7 @@ ${toolDescs}`
         // Execute tool and send result back
         console.debug(`[AgentRuntime] ${this.profile.name} tool_call #${toolCallCount}: ${toolCall.name}(${JSON.stringify(toolCall.args)})`)
         const toolResult = await this.executeTool(toolCall, obs)
+        lastToolResult = toolResult // Store for fallback summary
         console.debug(`[AgentRuntime] ${this.profile.name} tool_result #${toolCallCount}: ${toolCall.name} → ${toolResult.length} chars`)
         const resultMessage = [
           `工具执行结果:`,
@@ -417,7 +529,19 @@ ${toolDescs}`
           '',
           '请基于以上结果继续回复。',
         ].join('\n')
+        // Register handler before sending the next message (same race fix)
+        replyPromise = this.waitForReplyWithStreaming(tempSession.id, obs.conversationId)
         aiEngine.sendMessage(tempSession.id, resultMessage)
+      }
+
+      // FR-5.2: If agent executed tool calls but produced no text output,
+      // generate a fallback summary from the last tool result so the user
+      // sees what the agent did, rather than a silent [NO_REPLY].
+      if (!lastReply && toolCallCount > 0) {
+        const summary = lastToolResult.length > 100
+          ? lastToolResult.slice(0, 100) + '…'
+          : lastToolResult
+        return `已执行 ${toolCallCount} 次工具调用。${summary}`
       }
 
       return lastReply || ''
