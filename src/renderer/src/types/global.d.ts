@@ -324,6 +324,20 @@ declare global {
       list: (conversationId: string) => Promise<UsageRecord[]>
       summary: (range?: { from?: number; to?: number }) => Promise<UsageSummaryRow[]>
       totalCost: (range?: { from?: number; to?: number }) => Promise<number>
+      byProvider: (days?: number) => Promise<Array<{
+        provider_id: string
+        total_input_tokens: number
+        total_output_tokens: number
+        total_cost_usd: number
+        total_calls: number
+      }>>
+      byAgent: (days?: number) => Promise<Array<{
+        agent_profile_id: string
+        total_input_tokens: number
+        total_output_tokens: number
+        total_cost_usd: number
+        total_calls: number
+      }>>
     }
     todo: {
       sync: (conversationId: string, items: Array<{ content: string; completed: number; order_index: number }>) => Promise<{ success: boolean }>
@@ -354,6 +368,7 @@ declare global {
       setApiKey: (providerId: string, apiKey: string) => Promise<{ ok: boolean }>
       hasApiKey: (providerId: string) => Promise<boolean>
       testConnection: (id: string) => Promise<{ ok: boolean; version: string | null }>
+      refreshModels: (providerIds?: string[]) => Promise<Record<string, Array<{ id: string; name: string; contextWindow: number; maxOutputTokens?: number }>>>
     }
     chat: {
       startSession: (config: {
@@ -501,6 +516,49 @@ declare global {
       onA2ATaskCreated: (callback: (task: unknown) => void) => () => void
       onA2ATaskCompleted: (callback: (payload: unknown) => void) => () => void
       onA2ATaskQueued: (callback: (payload: { taskId: string; conversationId: string; position: number }) => void) => () => void
+    }
+    daemon: {
+      getStatus: () => Promise<{
+        agents: Array<{
+          profileId: string
+          name: string
+          role: string
+          providerId: string | null
+          isActive: boolean
+          isProcessing: boolean
+          pendingCount: number
+          claimedTaskCount: number
+          maxConcurrentTasks: number
+        }>
+        providerWorkload: Record<string, { running: number; queued: number }>
+        isRunning: boolean
+      }>
+      getHeartbeat: () => Promise<{
+        activeRuntimes: number
+        totalPending: number
+        lastBeat: number
+      }>
+      getTokenUsage: (days?: number) => Promise<Record<string, { inputTokens: number; outputTokens: number; totalTokens: number }>>
+      getAgentActivity: (agentProfileId: string, limit?: number) => Promise<{
+        recentConversations: Array<{
+          id: string
+          title: string | null
+          status: string
+          model: string | null
+          provider: string | null
+          created_at: number
+          updated_at: number
+        }>
+        taskSummary: Array<{ status: string; count: number }>
+        recentTasks: Array<{
+          id: string
+          title: string | null
+          status: string
+          completed_at: number | null
+          created_at: number
+          agent_status: string
+        }>
+      }>
     }
   }
 

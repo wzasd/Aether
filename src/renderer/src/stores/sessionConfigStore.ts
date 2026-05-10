@@ -54,7 +54,7 @@ export const useSessionConfigStore = create<SessionConfigState & {
   setExecutionMode: (mode: ExecutionMode) => void
   selectWorkingDir: () => Promise<void>
 }>((set) => ({
-  providerType: (persisted.providerType as string) || 'claude-cli',
+  providerType: (persisted.providerType as string) || 'claude',
   model: (persisted.model as SessionConfigState['model']) || 'claude-sonnet-4-6',
   permissionMode: migratePermissionMode(persisted.permissionMode as PermissionMode | undefined),
   workingDir: (persisted.workingDir as string) || '',

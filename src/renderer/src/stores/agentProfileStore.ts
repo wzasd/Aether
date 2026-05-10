@@ -12,6 +12,8 @@ export interface AgentProfileConfig {
   capabilities?: string[]
   whenToUse?: string
   outputContract?: string
+  customEnv?: Record<string, string>
+  customArgs?: string[]
   isEnabled: boolean
   sortOrder: number
   createdAt: number
@@ -28,6 +30,8 @@ interface NewProfileData {
   capabilities?: string[]
   whenToUse?: string
   outputContract?: string
+  customEnv?: Record<string, string>
+  customArgs?: string[]
   isEnabled?: boolean
   sortOrder?: number
   workspaceId?: string
@@ -43,6 +47,8 @@ interface PatchProfileData {
   capabilities?: string[] | null
   whenToUse?: string | null
   outputContract?: string | null
+  customEnv?: Record<string, string> | null
+  customArgs?: string[] | null
   isEnabled?: boolean
   sortOrder?: number
 }

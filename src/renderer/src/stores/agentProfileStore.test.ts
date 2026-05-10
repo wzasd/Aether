@@ -28,7 +28,7 @@ const mockProfiles: AgentProfileConfig[] = [
     model: 'claude-sonnet-4-6',
     description: '代码编写与重构',
     systemPrompt: 'You are a senior engineer.',
-    preferredProvider: 'claude-cli',
+    preferredProvider: 'claude',
     capabilities: ['coding', 'refactoring'],
     whenToUse: '需要编写或修改代码时',
     outputContract: '返回可运行的代码',

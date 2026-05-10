@@ -1337,6 +1337,12 @@ export const useChatStore = create<ChatState>((set, get) => {
               break
             }
 
+            // Guard: in Open Floor mode, agent_observation handles message persistence.
+            // complete events must not write to DB here to prevent duplicate messages.
+            if (eventConversationId && state.openFloorStates[eventConversationId]?.status === 'active') {
+              break
+            }
+
             // 保存 AI 消息到 DB
             // Per-task completion (M2-2)
           if (taskId) {
@@ -1571,60 +1577,12 @@ export const useChatStore = create<ChatState>((set, get) => {
           break
         }
 
-        case 'agent_thinking': {
-          const thinkingConvId = event.conversationId || state.currentConversation?.id
-          if (!thinkingConvId) break
-          if (state.openFloorStates[thinkingConvId]?.status !== 'active') break
-
-          // Track thinking agent in openFloor state (for status bar counter)
-          set((s) => {
-            const existing = s.openFloorStates[thinkingConvId]
-            if (!existing) return s
-            const alreadyThinking = existing.thinkingAgents.some((a) => a.agentId === event.agentProfileId)
-            if (alreadyThinking) return s
-            return {
-              openFloorStates: {
-                ...s.openFloorStates,
-                [thinkingConvId]: {
-                  ...existing,
-                  thinkingAgents: [...existing.thinkingAgents, {
-                    agentId: event.agentProfileId,
-                    agentName: event.agentName,
-                    agentRole: event.agentRole
-                  }]
-                }
-              }
-            }
-          })
-
-          // Also append a visible placeholder message in the chat so the user
-          // sees each agent "thinking" rather than a black-box wait.
-          if (state.currentConversation?.id === thinkingConvId) {
-            flushSync(() => {
-              set((s) => {
-                if (s.currentConversation?.id !== thinkingConvId) return s
-                const placeholderId = `thinking-${event.agentProfileId}-r${event.round ?? 1}`
-                // Avoid duplicate placeholders if agent_thinking is received twice
-                if (s.messages.some((m) => m.id === placeholderId)) return s
-                const placeholder: Message = {
-                  id: placeholderId,
-                  conversation_id: thinkingConvId,
-                  role: 'assistant',
-                  content: `🧠 **${event.agentName}**${event.agentRole ? `（${event.agentRole}）` : ''} 思考中...`,
-                  thinking: null,
-                  created_at: Date.now(),
-                }
-                return { ...s, messages: [...s.messages, placeholder] }
-              })
-            })
-          }
-          break
-        }
-
         case 'agent_observation': {
           const obsConvId = event.conversationId || state.currentConversation?.id
           if (!obsConvId) break
-          // Guard: ignore late observations after Open Floor has been closed (CR #9)
+          // Guard: only process agent_observation in active Open Floor mode.
+          // In non-Open-Floor (orchestrated) mode, complete events handle DB writes.
+          // This mutual exclusion prevents duplicate message persistence.
           if (state.openFloorStates[obsConvId]?.status !== 'active') {
             console.warn('[chatStore] agent_observation dropped: openFloorStates[%s] = %s (expected "active"), agent=%s',
               obsConvId, state.openFloorStates[obsConvId]?.status ?? 'undefined', event.agentName)
@@ -1662,7 +1620,11 @@ export const useChatStore = create<ChatState>((set, get) => {
                     newMessages[idx] = message as Message
                     return { ...s, messages: newMessages }
                   }
-                  // Fallback: no placeholder found — append normally
+                  // Fallback: no placeholder found — dedup before appending.
+                  // Without this, race conditions (placeholder not yet rendered,
+                  // duplicate IPC events, etc.) cause the same message to appear twice.
+                  const dupIdx = s.messages.findIndex((m) => m.id === message.id)
+                  if (dupIdx >= 0) return s
                   return { ...s, messages: [...s.messages, message as Message] }
                 })
               })

@@ -28,6 +28,8 @@ import { useAgentProfileStore, type AgentProfileConfig } from '../../stores/agen
 import { useProviderStore } from '../../stores/providerStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { AgentSettings } from '../settings/AgentSettings'
+import { ProviderLogo } from '../settings/AgentSettings/ProviderLogo'
+import { useDaemonStatus } from '../../hooks/useDaemonStatus'
 
 type PanelType = 'code' | 'diff' | 'docs' | 'preview' | 'settings' | 'memory'
 
@@ -78,6 +80,7 @@ export function WorkspaceArea({
   const [activePanelId, setActivePanelId] = useState('1')
 
   const [settingsSection, setSettingsSection] = useState('general')
+  const [jumpToAgentProfileId, setJumpToAgentProfileId] = useState<string | null>(null)
   const [showPanelPicker, setShowPanelPicker] = useState(false)
   const [sidebarTab, setSidebarTab] = useState<'explorer' | 'search' | 'git'>('explorer')
   const [showExplorer, setShowExplorer] = useState(true)
@@ -160,8 +163,23 @@ export function WorkspaceArea({
       setActivePanelId(id)
     }
     setSettingsSection('agents')
+    setJumpToAgentProfileId(null)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openAgentSettingsTrigger])
+
+  const navigateToAgentDetail = (profileId: string) => {
+    const existing = panels.find((p) => p.type === 'settings')
+    if (existing) {
+      setActivePanelId(existing.id)
+    } else {
+      const cat = PANEL_CATALOGUE.find((c) => c.type === 'settings')!
+      const id = String(++panelCounter)
+      setPanels((prev) => [...prev, { id, type: 'settings', label: cat.label }])
+      setActivePanelId(id)
+    }
+    setSettingsSection('agents')
+    setJumpToAgentProfileId(profileId)
+  }
 
   useEffect(() => {
     if (!openTrackChangesTrigger) return
@@ -347,7 +365,7 @@ export function WorkspaceArea({
                 {activePanel?.type === 'docs'     && <DocsContent />}
                 {activePanel?.type === 'preview'  && <PreviewPanel />}
                 {activePanel?.type === 'settings' && (
-                  <SettingsContent section={settingsSection} onSection={setSettingsSection} />
+                  <SettingsContent section={settingsSection} onSection={setSettingsSection} jumpToAgentProfileId={jumpToAgentProfileId} onNavigateToAgent={navigateToAgentDetail} />
                 )}
                 {activePanel?.type === 'memory'   && <MemoryContent />}
               </div>
@@ -473,7 +491,7 @@ const SETTINGS_NAV = [
   { id: 'usage',       label: 'Usage',           icon: <BarChart3 size={13} /> },
 ]
 
-function SettingsContent({ section, onSection }: { section: string; onSection: (s: string) => void }) {
+function SettingsContent({ section, onSection, jumpToAgentProfileId, onNavigateToAgent }: { section: string; onSection: (s: string) => void; jumpToAgentProfileId: string | null; onNavigateToAgent: (profileId: string) => void }) {
   return (
     <div className="h-full bg-card flex overflow-hidden">
       <div className="w-44 border-r border-border bg-background overflow-y-auto shrink-0">
@@ -497,8 +515,8 @@ function SettingsContent({ section, onSection }: { section: string; onSection: (
       <div className="flex-1 overflow-y-auto p-6">
         {section === 'general'    && <SettingsGeneral />}
         {section === 'appearance' && <SettingsAppearance />}
-        {section === 'agents'     && <AgentSettings />}
-        {section === 'runtimes'   && <SettingsRuntimes />}
+        {section === 'agents'     && <AgentSettings initialProfileId={jumpToAgentProfileId} />}
+        {section === 'runtimes'   && <SettingsRuntimes onNavigateToAgent={onNavigateToAgent} />}
         {section === 'teams'      && <SettingsTeams />}
         {section === 'keys'       && <SettingsKeys />}
         {section === 'mcp'        && <SettingsMcp />}
@@ -658,19 +676,74 @@ function SettingsAppearance() {
   )
 }
 
-function SettingsRuntimes() {
+function SettingsRuntimes({ onNavigateToAgent }: { onNavigateToAgent?: (profileId: string) => void }) {
   const providers = useProviderStore((s) => s.providers)
   const isLoading = useProviderStore((s) => s.isLoading)
   const loadProviders = useProviderStore((s) => s.loadProviders)
+  const refreshModels = useProviderStore((s) => s.refreshModels)
   const setApiKey = useProviderStore((s) => s.setApiKey)
   const testConnection = useProviderStore((s) => s.testConnection)
+  const profiles = useAgentProfileStore((s) => s.profiles)
   const [editingPath, setEditingPath] = useState<Record<string, string>>({})
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({})
   const [testing, setTesting] = useState<Record<string, string>>({})
+  const [refreshingModels, setRefreshingModels] = useState<Record<string, boolean>>({})
+  const [detailProviderId, setDetailProviderId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all')
+  const [tokenUsage, setTokenUsage] = useState<Record<string, { inputTokens: number; outputTokens: number; totalTokens: number }>>({})
+  const [providerCostData, setProviderCostData] = useState<Record<string, { total_input_tokens: number; total_output_tokens: number; total_cost_usd: number; total_calls: number }>>({})
+  const { status: daemonStatus } = useDaemonStatus(5000)
 
   useEffect(() => {
     loadProviders().catch(() => {})
   }, [loadProviders])
+
+  useEffect(() => {
+    const fetchUsage = async () => {
+      try {
+        const [tokenUsageResult, costResult] = await Promise.all([
+          window.api.daemon.getTokenUsage(7),
+          window.api.usage.byProvider(7),
+        ])
+        setTokenUsage(tokenUsageResult)
+        const costMap: Record<string, { total_input_tokens: number; total_output_tokens: number; total_cost_usd: number; total_calls: number }> = {}
+        for (const row of costResult) {
+          costMap[row.provider_id] = row
+        }
+        setProviderCostData(costMap)
+      } catch {
+        // Ignore errors
+      }
+    }
+    fetchUsage()
+    const timer = setInterval(fetchUsage, 10000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const agentCountByProvider = new Map<string, number>()
+  for (const p of profiles) {
+    if (p.preferredProvider) {
+      agentCountByProvider.set(p.preferredProvider, (agentCountByProvider.get(p.preferredProvider) ?? 0) + 1)
+    }
+  }
+
+  // Workload per provider from daemon status (pre-computed by backend)
+  const workloadByProvider = daemonStatus?.providerWorkload ?? {}
+
+  let filteredProviders = providers.filter((p) => {
+    if (statusFilter === 'online') return p.installed
+    if (statusFilter === 'offline') return !p.installed
+    return true
+  })
+  if (searchQuery.trim()) {
+    const q = searchQuery.toLowerCase()
+    filteredProviders = filteredProviders.filter((p) =>
+      p.meta.name.toLowerCase().includes(q) ||
+      p.meta.id.toLowerCase().includes(q) ||
+      p.meta.vendor.toLowerCase().includes(q)
+    )
+  }
 
   const configureRuntime = async (id: string, binaryPath?: string) => {
     await window.api.provider.configure(id, { enabled: true, binaryPath: binaryPath?.trim() || undefined })
@@ -697,10 +770,195 @@ function SettingsRuntimes() {
     }
   }
 
+  const onlineCount = providers.filter((p) => p.installed).length
+  const offlineCount = providers.filter((p) => !p.installed).length
+
+  // ─── Detail view ───────────────────────────────────────────
+  if (detailProviderId) {
+    const provider = providers.find((p) => p.meta.id === detailProviderId)
+    if (!provider) {
+      setDetailProviderId(null)
+      return null
+    }
+    const agentsUsing = agentCountByProvider.get(provider.meta.id) ?? 0
+    const usingAgents = profiles.filter((p) => p.preferredProvider === provider.meta.id)
+
+    return (
+      <div>
+        {/* Breadcrumb */}
+        <button
+          onClick={() => setDetailProviderId(null)}
+          className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground mb-4 transition-colors"
+        >
+          ← All Runtimes
+        </button>
+
+        {/* Hero Card */}
+        <div className="rounded-lg border border-border bg-card p-4 mb-4">
+          <div className="flex items-start gap-3">
+            <ProviderLogo vendor={provider.meta.vendor} size="lg" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-foreground">{provider.meta.name}</span>
+                {provider.installed ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 rounded px-1.5 py-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Online
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 rounded px-1.5 py-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> Offline
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-1">
+                {provider.meta.binary} · {provider.meta.vendor} · {provider.meta.id}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {provider.version ? `CLI ${provider.version}` : 'No version detected'}
+                {provider.hasApiKey && <span className="text-blue-400 ml-2">· API key set</span>}
+              </div>
+              {(() => {
+                const wl = workloadByProvider[provider.meta.id]
+                if (!wl || (wl.running === 0 && wl.queued === 0)) return null
+                return (
+                  <div className="text-[11px] text-muted-foreground mt-0.5">
+                    Workload: {wl.running > 0 ? `${wl.running} running` : ''}
+                    {wl.running > 0 && wl.queued > 0 ? ' · ' : ''}
+                    {wl.queued > 0 ? `${wl.queued} queued` : ''}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Models Card */}
+          {provider.meta.models.length > 0 && (
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-medium text-foreground">Available Models</h3>
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    if (refreshingModels[provider.meta.id]) return
+                    setRefreshingModels((prev) => ({ ...prev, [provider.meta.id]: true }))
+                    try {
+                      // Use providerStore.refreshModels which merges results into the store
+                      await useProviderStore.getState().refreshModels(provider.meta.id)
+                    } catch {
+                      // fallback: static models already in provider.meta.models
+                    } finally {
+                      setRefreshingModels((prev) => ({ ...prev, [provider.meta.id]: false }))
+                    }
+                  }}
+                  className="text-[10px] text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded border border-border hover:bg-secondary/50 transition-colors"
+                  title="Refresh model list"
+                >
+                  <RefreshCw size={10} className={refreshingModels[provider.meta.id] ? 'animate-spin' : ''} />
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {provider.meta.models.map((model) => (
+                  <span key={model.id} className="text-[10px] rounded-full border border-border bg-secondary/50 px-2 py-0.5 text-muted-foreground">
+                    {model.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Agents Card */}
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h3 className="text-xs font-medium text-foreground mb-3">Serving Agents ({agentsUsing})</h3>
+            {usingAgents.length > 0 ? (
+              <div className="space-y-2">
+                {usingAgents.map((agent) => (
+                  <button
+                    key={agent.id}
+                    onClick={() => onNavigateToAgent?.(agent.id)}
+                    className="group w-full flex items-center gap-2 text-xs p-1.5 rounded hover:bg-secondary/60 transition-colors text-left"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-secondary flex items-center justify-center text-[10px] font-medium">
+                      {agent.name.charAt(0).toUpperCase()}
+                    </span>
+                    <span className="text-foreground">{agent.name}</span>
+                    <span className="text-[10px] text-muted-foreground">({agent.role})</span>
+                    {onNavigateToAgent && (
+                      <span className="ml-auto text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+                        →
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">No agents use this provider.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Usage Card — full width, richer stats */}
+        <div className="mt-4">
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h3 className="text-xs font-medium text-foreground mb-3">Usage (7d)</h3>
+            {(() => {
+              const usage = tokenUsage[provider.meta.id]
+              const cost = providerCostData[provider.meta.id]
+              const hasData = (usage && usage.totalTokens > 0) || (cost && cost.total_calls > 0)
+              if (!hasData) {
+                return <p className="text-[11px] text-muted-foreground">No usage data yet.</p>
+              }
+              const formatTokens = (n: number) => {
+                if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+                if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+                return `${n}`
+              }
+              const formatCost = (n: number) => {
+                if (n >= 1) return `$${n.toFixed(2)}`
+                if (n >= 0.01) return `$${n.toFixed(3)}`
+                return `$${n.toFixed(4)}`
+              }
+              return (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                  <div>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">Input tokens</div>
+                    <div className="text-sm font-medium text-foreground">{usage ? formatTokens(usage.inputTokens) : '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">Output tokens</div>
+                    <div className="text-sm font-medium text-foreground">{usage ? formatTokens(usage.outputTokens) : '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">Total tokens</div>
+                    <div className="text-sm font-semibold text-foreground">{usage ? formatTokens(usage.totalTokens) : '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">Calls</div>
+                    <div className="text-sm font-medium text-foreground">{cost ? cost.total_calls : '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">Est. cost</div>
+                    <div className="text-sm font-semibold text-emerald-400">{cost ? formatCost(cost.total_cost_usd) : '—'}</div>
+                  </div>
+                </div>
+              )
+            })()}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ─── List view ─────────────────────────────────────────────
   return (
     <div>
+      {/* Header bar */}
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-foreground">Runtimes</h2>
+        <div className="flex items-center gap-2">
+          <Monitor size={14} className="text-muted-foreground" />
+          <h2 className="text-foreground text-sm font-medium">Runtimes</h2>
+          <span className="text-[10px] text-muted-foreground">({filteredProviders.length})</span>
+        </div>
         <button
           onClick={() => loadProviders().catch(() => {})}
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground px-2 py-1 border border-border rounded transition-colors"
@@ -709,89 +967,155 @@ function SettingsRuntimes() {
         </button>
       </div>
 
-      <div className="space-y-3">
-        {providers.map((provider) => {
-          const pathValue = editingPath[provider.meta.id] ?? ''
+      {/* Search + Filters */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 mb-3">
+        <div className="relative flex-1 w-full">
+          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search runtimes..."
+            className="w-full rounded border border-border bg-card pl-8 pr-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
+          />
+        </div>
+        <div className="flex items-center gap-1">
+          {[
+            { key: 'all' as const, label: 'All', count: providers.length },
+            { key: 'online' as const, label: 'Online', count: onlineCount },
+            { key: 'offline' as const, label: 'Offline', count: offlineCount },
+          ].map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setStatusFilter(f.key)}
+              className={`text-[10px] rounded-full px-2.5 py-1 transition-colors ${
+                statusFilter === f.key
+                  ? 'bg-foreground text-background'
+                  : 'bg-secondary text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {f.label} {f.count}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="rounded-lg border border-border overflow-hidden">
+        <div className="grid grid-cols-[1fr_100px_70px_100px_80px_80px_100px] gap-3 px-4 py-2 border-b border-border bg-secondary/30 text-[10px] uppercase tracking-wide text-muted-foreground">
+          <span>Runtime</span>
+          <span>Health</span>
+          <span>Agents</span>
+          <span>Workload</span>
+          <span>Cost</span>
+          <span>CLI</span>
+          <span className="text-right">Actions</span>
+        </div>
+
+        {filteredProviders.length === 0 && (
+          <div className="px-4 py-6 text-center">
+            <p className="text-xs text-muted-foreground">{isLoading ? 'Detecting runtimes...' : 'No runtimes match your filters.'}</p>
+          </div>
+        )}
+
+        {filteredProviders.map((provider) => {
+          const agentsUsing = agentCountByProvider.get(provider.meta.id) ?? 0
           return (
-            <div key={provider.meta.id} className="rounded-lg border border-border bg-secondary/20 p-3">
-              <div className="flex items-start gap-3">
-                <Monitor size={14} className={provider.installed ? 'text-emerald-400 mt-0.5' : 'text-muted-foreground mt-0.5'} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-medium text-foreground">{provider.meta.name}</span>
-                    <span className="text-[10px] rounded border border-border px-1.5 py-0.5 text-muted-foreground">{provider.meta.id}</span>
-                    <span className={`text-[10px] rounded px-1.5 py-0.5 ${provider.installed ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
-                      {provider.installed ? provider.version ?? 'installed' : 'not detected'}
+            <div
+              key={provider.meta.id}
+              className="grid grid-cols-[1fr_100px_70px_100px_80px_80px_100px] gap-3 px-4 py-3 border-b border-border hover:bg-secondary/20 transition-colors cursor-pointer items-center"
+              onClick={() => setDetailProviderId(provider.meta.id)}
+            >
+              {/* Runtime */}
+              <div className="flex items-center gap-2 min-w-0">
+                <ProviderLogo vendor={provider.meta.vendor} size="sm" />
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-foreground truncate">{provider.meta.name}</div>
+                  <div className="text-[10px] text-muted-foreground truncate">{provider.meta.id}</div>
+                </div>
+              </div>
+
+              {/* Health */}
+              <div>
+                {provider.installed ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Online
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> Offline
+                  </span>
+                )}
+              </div>
+
+              {/* Agents */}
+              <div>
+                <span className="text-[10px] text-muted-foreground">
+                  {agentsUsing > 0 ? `${agentsUsing}` : '—'}
+                </span>
+              </div>
+
+              {/* Workload */}
+              <div>
+                {(() => {
+                  const wl = workloadByProvider[provider.meta.id]
+                  if (!wl || (wl.running === 0 && wl.queued === 0)) {
+                    return <span className="text-[10px] text-muted-foreground">Idle</span>
+                  }
+                  return (
+                    <span className="text-[10px] text-muted-foreground">
+                      {wl.running > 0 ? `${wl.running} running` : ''}
+                      {wl.running > 0 && wl.queued > 0 ? ' / ' : ''}
+                      {wl.queued > 0 ? `${wl.queued} queued` : ''}
                     </span>
-                    {provider.hasApiKey && (
-                      <span className="text-[10px] rounded bg-blue-500/10 px-1.5 py-0.5 text-blue-400">key set</span>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-muted-foreground mt-1">
-                    Binary <span className="font-mono text-foreground">{provider.meta.binary}</span> · {provider.meta.vendor}
-                  </div>
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {provider.meta.models.slice(0, 5).map((model) => (
-                      <span key={model.id} className="text-[10px] rounded-full border border-border bg-card px-2 py-0.5 text-muted-foreground">
-                        {model.name}
-                      </span>
-                    ))}
-                    {provider.meta.models.length > 5 && (
-                      <span className="text-[10px] text-muted-foreground">+{provider.meta.models.length - 5}</span>
-                    )}
-                  </div>
-                </div>
+                  )
+                })()}
               </div>
 
-              <div className="grid grid-cols-1 gap-2 mt-3 md:grid-cols-2">
-                <div className="flex gap-2">
-                  <input
-                    value={pathValue}
-                    onChange={(e) => setEditingPath((prev) => ({ ...prev, [provider.meta.id]: e.target.value }))}
-                    placeholder="Custom binary path"
-                    className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
-                  />
-                  <button
-                    onClick={() => configureRuntime(provider.meta.id, pathValue)}
-                    className="shrink-0 rounded border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    Save
-                  </button>
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    value={apiKeys[provider.meta.id] ?? ''}
-                    onChange={(e) => setApiKeys((prev) => ({ ...prev, [provider.meta.id]: e.target.value }))}
-                    placeholder={provider.hasApiKey ? 'Replace API key' : 'API key'}
-                    type="password"
-                    className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
-                  />
-                  <button
-                    onClick={() => saveKey(provider.meta.id)}
-                    className="shrink-0 rounded border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    Key
-                  </button>
-                </div>
+              {/* Cost */}
+              <div>
+                {(() => {
+                  const usage = tokenUsage[provider.meta.id]
+                  if (!usage || usage.totalTokens === 0) {
+                    return <span className="text-[10px] text-muted-foreground">—</span>
+                  }
+                  const formatTokens = (n: number) => {
+                    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+                    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+                    return `${n}`
+                  }
+                  return (
+                    <span className="text-[10px] text-muted-foreground">
+                      {formatTokens(usage.totalTokens)}
+                    </span>
+                  )
+                })()}
               </div>
 
-              <div className="mt-2 flex items-center gap-2">
+              {/* CLI */}
+              <div>
+                <span className="text-[10px] text-muted-foreground font-mono">
+                  {provider.version ? `v${provider.version}` : '—'}
+                </span>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                 <button
                   onClick={() => runTest(provider.meta.id)}
-                  className="rounded border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
                 >
                   Test
                 </button>
-                {testing[provider.meta.id] && (
-                  <span className="text-[10px] text-muted-foreground">{testing[provider.meta.id]}</span>
-                )}
+                <button
+                  onClick={() => setDetailProviderId(provider.meta.id)}
+                  className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+                >
+                  Config
+                </button>
               </div>
             </div>
           )
         })}
-        {providers.length === 0 && (
-          <p className="text-xs text-muted-foreground">{isLoading ? 'Detecting runtimes...' : 'No runtimes registered.'}</p>
-        )}
       </div>
     </div>
   )
