@@ -32,6 +32,7 @@ export interface AgentContextPacket {
     content: string
   }>
   recentFileChanges: FileChangeEntry[]
+  agentRoster: Array<{ name: string; role: string }>
 }
 
 export interface ContextSelectorOptions {
@@ -275,6 +276,18 @@ function getWorkspaceId(conversationId: string): string | null {
   return row?.workspace_id ?? null
 }
 
+function loadAgentRoster(workspaceId: string): Array<{ name: string; role: string }> {
+  const db = getDb()
+  const rows = db
+    .prepare(
+      `SELECT name, role FROM agent_profile_configs
+       WHERE workspace_id = ? AND is_enabled = 1
+       ORDER BY role, name`
+    )
+    .all(workspaceId) as Array<{ name: string; role: string }>
+  return rows
+}
+
 // ─── HandoffStrategy ──────────────────────────────────────────────────────────
 // For agent→agent delegation: unconditionally include fromAgent's last output
 // + file changes. No keyword scoring — the handoff IS the context.
@@ -434,7 +447,8 @@ export function buildContextPacket(opts: ContextSelectorOptions): AgentContextPa
     taskState: { goal: '', completed: [], pending: [], decisions: [], blockers: [] },
     relevantMessages: [],
     projectMemories: [],
-    recentFileChanges: []
+    recentFileChanges: [],
+    agentRoster: []
   }
 
   // 1. Extract keywords
@@ -518,6 +532,11 @@ export function buildContextPacket(opts: ContextSelectorOptions): AgentContextPa
     packet.taskState.blockers = summary.blockers
   }
 
+  // 9. Load agent roster for this workspace
+  if (workspaceId) {
+    packet.agentRoster = loadAgentRoster(workspaceId)
+  }
+
   return packet
 }
 
@@ -530,19 +549,25 @@ function getAgentRole(agentProfileId: string | null): string | null {
   return row?.role ?? null
 }
 
-/** Resolve agent profile ID to human-readable name, with in-process cache. */
+/** Resolve agent profile ID to human-readable name, with in-process cache.
+ *  Falls back to the raw profileId when the DB is not available (e.g. in unit tests). */
 const agentNameCache = new Map<string, string>()
 function getAgentName(agentProfileId: string | null): string {
   if (!agentProfileId) return 'Assistant'
   const cached = agentNameCache.get(agentProfileId)
   if (cached) return cached
-  const db = getDb()
-  const row = db
-    .prepare('SELECT name FROM agent_profile_configs WHERE id = ?')
-    .get(agentProfileId) as { name: string } | undefined
-  const name = row?.name ?? agentProfileId
-  agentNameCache.set(agentProfileId, name)
-  return name
+  try {
+    const db = getDb()
+    const row = db
+      .prepare('SELECT name FROM agent_profile_configs WHERE id = ?')
+      .get(agentProfileId) as { name: string } | undefined
+    const name = row?.name ?? agentProfileId
+    agentNameCache.set(agentProfileId, name)
+    return name
+  } catch {
+    // DB not initialized (unit tests) — fall back to raw ID
+    return agentProfileId
+  }
 }
 
 function buildReason(kwScore: number, recScore: number, roleScore: number): string {
@@ -620,6 +645,19 @@ function renderMemorySection(
   return sections.join('\n')
 }
 
+function renderAgentRosterSection(
+  roster: Array<{ name: string; role: string }>
+): string | null {
+  if (roster.length === 0) return null
+
+  const sections: string[] = ['[AGENT ROSTER]']
+  for (const agent of roster) {
+    sections.push(`- @${agent.name} (${agent.role})`)
+  }
+
+  return sections.join('\n')
+}
+
 export function renderContextPacket(packet: AgentContextPacket): string {
   const sections: string[] = []
 
@@ -649,6 +687,13 @@ export function renderContextPacket(packet: AgentContextPacket): string {
   if (memorySection) {
     sections.push('')
     sections.push(memorySection)
+  }
+
+  // Section 5: Agent Roster (only if present)
+  const rosterSection = renderAgentRosterSection(packet.agentRoster)
+  if (rosterSection) {
+    sections.push('')
+    sections.push(rosterSection)
   }
 
   return sections.join('\n')

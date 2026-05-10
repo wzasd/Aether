@@ -3,7 +3,7 @@ import type { WebContents } from 'electron'
 import { getDb } from '../core/db'
 import { createCandidate } from '../core/memory-index'
 import { AgentRuntime } from './agent-runtime'
-import type { AgentProfile, A2ATask, ParsedMention, ExecutionMode, PlannedTask, CollaborationMode, OpenFloorState, OpenFloorResponse } from './a2a-types'
+import type { AgentProfile, A2ATask, ParsedMention, ExecutionMode, PlannedTask, CollaborationMode, OpenFloorState, OpenFloorResponse, ObservationTool } from './a2a-types'
 import type { ReflowGroup } from './reflow-orchestrator'
 import { MAX_DELEGATION_DEPTH, MAX_TASKS_PER_CONVERSATION, OPEN_FLOOR_TIMEOUT_MS } from './a2a-types'
 import { extractCandidates } from './memory-extractor'
@@ -788,12 +788,30 @@ class AgentOrchestrator {
             // Check abort before expensive observation call
             if (state.status !== 'active' || abortController.signal.aborted) return
 
+            // Build readMessages tool — aligns with runtime-registry.ts claimAndExecute()
+            const readMessagesTool: ObservationTool = {
+              name: 'readMessages',
+              description: '读取对话历史，了解最近的讨论内容和上下文。使用此工具可以帮助你做出更准确的判断和回复。',
+              parameters: {
+                limit: { type: 'number', description: '返回最近 N 条消息，默认50，最大100' },
+              },
+              execute: async (args: Record<string, unknown>) => {
+                const limit = Math.min(typeof args.limit === 'number' ? args.limit : 50, 100)
+                const turns = await this.buildConversationContext(conversationId)
+                const recentTurns = turns.slice(-limit)
+                return recentTurns.length > 0
+                  ? recentTurns.map((m) => `[${m.role}]: ${m.content}`).join('\n\n')
+                  : '（暂无对话历史）'
+              },
+            }
+
             // Push observation to the agent
             const result = await runtime.onObservation({
               conversationId,
               message: roundMessage,
               context,
               collaborationMode: 'open_floor',
+              tools: [readMessagesTool],
             })
 
             if (result.reply) {

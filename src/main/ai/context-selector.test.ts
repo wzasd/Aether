@@ -18,6 +18,7 @@ function makePacket(overrides: Partial<AgentContextPacket> = {}): AgentContextPa
     relevantMessages: [],
     projectMemories: [],
     recentFileChanges: [],
+    agentRoster: [],
     ...overrides
   }
 }
@@ -60,8 +61,8 @@ describe('renderContextPacket', () => {
     const output = renderContextPacket(packet)
 
     expect(output).toContain('[RELEVANT CONTEXT]')
-    expect(output).toContain('[Agent] We decided')
-    expect(output).toContain('[Assistant] The upload')
+    expect(output).toContain('[@p1] We decided')
+    expect(output).toContain('[@Assistant] The upload')
   })
 
   it('renders TASK PROGRESS with Changed Files when file changes present', () => {
@@ -161,7 +162,8 @@ describe('renderContextPacket', () => {
       output.indexOf('[TASK HANDOFF]'),
       output.indexOf('[TASK PROGRESS]'),
       output.indexOf('[RELEVANT CONTEXT]'),
-      output.indexOf('[PROJECT MEMORY]')
+      output.indexOf('[PROJECT MEMORY]'),
+      output.indexOf('[AGENT ROSTER]')
     ]
     for (let i = 1; i < sectionOrder.length; i++) {
       expect(sectionOrder[i]).toBeGreaterThan(sectionOrder[i - 1])
