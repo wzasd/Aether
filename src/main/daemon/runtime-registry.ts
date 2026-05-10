@@ -31,10 +31,12 @@ export interface ResidentRuntime {
 
 /** Cached config + sessionId for hot-wake (aligns with Slock: idleAgentConfigs).
  *  After turn_end, cache the last known good config so the next turn can
- *  resume without querying the taskQueue (millisecond-level hot-wake). */
+ *  resume without querying the taskQueue (millisecond-level hot-wake).
+ *  Keyed by `${profileId}:${providerType}` for per-provider session isolation. */
 interface IdleAgentConfig {
   config: SessionConfig
   sessionId: string | null
+  providerType: string | null
   cachedAt: number
 }
 
@@ -127,7 +129,12 @@ export class RuntimeRegistry {
     resident.runtime.suspend()
     resident.isProcessing = false
     // Clear idle cache — suspended agent needs fresh start on resume
-    this.idleAgentConfigs.delete(profileId)
+    // Delete all cache entries for this profile (keyed by profileId:providerType)
+    for (const key of Array.from(this.idleAgentConfigs.keys())) {
+      if (key.startsWith(`${profileId}:`)) {
+        this.idleAgentConfigs.delete(key)
+      }
+    }
     console.info('[RuntimeRegistry] suspended:', resident.profile.name)
     return true
   }
@@ -218,12 +225,16 @@ export class RuntimeRegistry {
       // Only start a new session if the runtime is not already active.
       if (!resident.runtime.isActive && this.config) {
         // Hot-wake: check idle cache first (avoids taskQueue query)
-        const cached = this.idleAgentConfigs.get(profileId)
+        // FR-3: idleAgentConfigs key includes providerType for per-provider isolation
+        const providerType = this.config.providerType
+        const idleCacheKey = `${profileId}:${providerType}`
+        const cached = this.idleAgentConfigs.get(idleCacheKey)
         const cacheValid = cached && (Date.now() - cached.cachedAt < this.IDLE_CACHE_TTL_MS)
 
+        // FR-1.5: pass providerType to getLastSessionId for per-provider filtering
         const lastSessionId = cacheValid
-          ? (cached!.sessionId ?? task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId))
-          : (task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId))
+          ? (cached!.sessionId ?? task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId, providerType))
+          : (task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId, providerType))
 
         try {
           const resumeConfig = lastSessionId
@@ -255,13 +266,16 @@ export class RuntimeRegistry {
       }
 
       // Slock: cache config+sessionId for millisecond hot-wake on next turn
+      // FR-3: idleAgentConfigs key includes providerType for per-provider isolation
       if (this.config) {
-        this.idleAgentConfigs.set(profileId, {
+        const idleCacheKey = `${profileId}:${this.config.providerType}`
+        this.idleAgentConfigs.set(idleCacheKey, {
           config: this.config,
           sessionId: sessionId ?? null,
+          providerType: this.config.providerType,
           cachedAt: Date.now(),
         })
-        console.debug('[RuntimeRegistry] idle cache updated:', resident.profile.name, 'sessionId=', sessionId)
+        console.debug('[RuntimeRegistry] idle cache updated:', resident.profile.name, 'sessionId=', sessionId, 'provider=', this.config.providerType)
       }
 
       if (result.reply) {
@@ -442,6 +456,7 @@ export class RuntimeRegistry {
     const params: EnqueueTaskParams = {
       conversationId: event.conversationId,
       agentProfileId: resident.profile.id,
+      providerType: this.config?.providerType,
       message: messageContent,
       context,
     }

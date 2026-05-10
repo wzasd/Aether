@@ -87,7 +87,15 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
     // Validate session ID format — prevent cross-provider pollution
     // (e.g. OpenCode's `oc-xxx` ID passed to Claude's `--resume` which requires UUID)
     const providedSessionId = config.sessionId
-    const resumeExistingSession = Boolean(providedSessionId) && this.isValidSessionId(providedSessionId!)
+    const isValid = Boolean(providedSessionId) && this.isValidSessionId(providedSessionId!)
+    if (providedSessionId && !isValid) {
+      // FR-5: Log structured event when session ID is rejected
+      writeObservabilityEvent('runtime:session_id_rejected', {
+        providerType: this.meta.id,
+        sessionId: providedSessionId,
+      })
+    }
+    const resumeExistingSession = isValid
     const sessionId = resumeExistingSession ? providedSessionId! : randomUUID()
     const sessionConfig = { ...config, sessionId }
     const session: Session = {

@@ -15,7 +15,7 @@ import {
 const require = createRequire(import.meta.url)
 const BetterSqlite3 = require('better-sqlite3')
 
-const SCHEMA_VERSION = 27
+const SCHEMA_VERSION = 28
 
 let db: Database.Database
 
@@ -777,6 +777,12 @@ function applyMigrations(): void {
         `).run(seed.systemPrompt, seed.whenToUse, seed.outputContract, seed.id)
       }
     }
+  }
+
+  if (version < 28) {
+    // Per-provider session ID isolation: add provider column to agent_task_queue
+    // so getLastSessionId can filter by provider and prevent cross-provider pollution.
+    addMissingColumn('agent_task_queue', 'provider', 'TEXT')
   }
 
   setSchemaVersion(SCHEMA_VERSION)

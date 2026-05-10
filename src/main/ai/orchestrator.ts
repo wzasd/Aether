@@ -67,9 +67,9 @@ class AgentOrchestrator {
   private drainingQueues: Set<string> = new Set()
   private baseConfigs: Map<string, SessionConfig> = new Map()
   private webContentsMap: Map<string, WebContents> = new Map()
-  // Persists the last Claude CLI session ID for primary agents so the next
+  // Persists the last CLI session ID for primary agents so the next
   // turn can pass --resume <sessionId> and skip context injection entirely.
-  // Key: `conversationId:profileId`. Value includes a config fingerprint so
+  // Key: `conversationId:profileId:providerType`. Value includes a config fingerprint so
   // stale entries are discarded when provider/model/workingDir/permissionMode change.
   private primarySessionIds: Map<string, { sessionId: string; fingerprint: string }> = new Map()
   private zombieTaskIds: Set<string> = new Set()
@@ -274,7 +274,8 @@ class AgentOrchestrator {
 
     // Check if primary agent has a resumable session from a previous turn.
     // Discard the stored entry if provider/model/workingDir/permissionMode changed.
-    const resumeKey = `${conversationId}:${profile.id}`
+    // FR-2: resumeKey includes providerType for per-provider session isolation
+    const resumeKey = `${conversationId}:${profile.id}:${sessionConfig.providerType}`
     const configFingerprint = `${sessionConfig.providerType}:${sessionConfig.model}:${sessionConfig.workingDir}:${sessionConfig.permissionMode}`
     const stored = this.primarySessionIds.get(resumeKey)
     const resumeSessionId = stored?.fingerprint === configFingerprint ? stored.sessionId : undefined
@@ -1267,7 +1268,9 @@ class AgentOrchestrator {
       // so stale entries are discarded if provider/model/workingDir/permissionMode change.
       if (task.depth === 0 && !task.readOnly && sessionIdAtStart) {
         const fingerprint = `${baseConfig.providerType}:${baseConfig.model}:${baseConfig.workingDir}:${baseConfig.permissionMode}`
-        this.primarySessionIds.set(`${conversationId}:${profile.id}`, { sessionId: sessionIdAtStart, fingerprint })
+        // FR-2: primarySessionIds key includes providerType for per-provider session isolation
+        const sessionKey = `${conversationId}:${profile.id}:${baseConfig.providerType}`
+        this.primarySessionIds.set(sessionKey, { sessionId: sessionIdAtStart, fingerprint })
       }
 
       // Serial queue draining is handled by the caller (sendUserMessage) to avoid nested recursion
@@ -1284,7 +1287,7 @@ class AgentOrchestrator {
 
       // Clear stored session ID so a failed session is never blindly resumed.
       if (task.depth === 0) {
-        this.primarySessionIds.delete(`${conversationId}:${profile.id}`)
+        this.primarySessionIds.delete(`${conversationId}:${profile.id}:${baseConfig.providerType}`)
       }
     }
   }

@@ -15,6 +15,7 @@ export interface AgentTask {
   id: string
   conversationId: string
   agentProfileId: string
+  providerType: string | null // Provider type for per-provider session isolation
   message: string
   context: string | null // JSON-serialized conversation context
   status: TaskStatus
@@ -31,6 +32,7 @@ export interface AgentTask {
 export interface EnqueueTaskParams {
   conversationId: string
   agentProfileId: string
+  providerType?: string // Provider type for per-provider session isolation
   message: string
   context?: Array<{ role: string; content: string }>
   depth?: number
@@ -67,6 +69,7 @@ export class TaskQueue {
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
         agent_profile_id TEXT NOT NULL,
+        provider TEXT,
         message TEXT NOT NULL,
         context TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
@@ -90,6 +93,12 @@ export class TaskQueue {
       CREATE INDEX IF NOT EXISTS idx_task_queue_conversation
       ON agent_task_queue(conversation_id, created_at)
     `).run()
+
+    // Index for per-provider session ID lookup (getLastSessionId)
+    this.getDb().prepare(`
+      CREATE INDEX IF NOT EXISTS idx_task_queue_session_provider
+      ON agent_task_queue(conversation_id, agent_profile_id, provider, completed_at)
+    `).run()
   }
 
   /** Enqueue a new task for an agent */
@@ -98,6 +107,7 @@ export class TaskQueue {
       id: randomUUID(),
       conversationId: params.conversationId,
       agentProfileId: params.agentProfileId,
+      providerType: params.providerType ?? null,
       message: params.message,
       context: params.context ? JSON.stringify(params.context) : null,
       status: 'pending',
@@ -113,12 +123,13 @@ export class TaskQueue {
 
     this.getDb().prepare(`
       INSERT INTO agent_task_queue
-      (id, conversation_id, agent_profile_id, message, context, status, created_at, depth, parent_task_id, session_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, conversation_id, agent_profile_id, provider, message, context, status, created_at, depth, parent_task_id, session_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       task.id,
       task.conversationId,
       task.agentProfileId,
+      task.providerType,
       task.message,
       task.context,
       task.status,
@@ -341,8 +352,23 @@ export class TaskQueue {
     return row.count
   }
 
-  /** Get the most recent session ID for an agent in a conversation */
-  getLastSessionId(conversationId: string, agentProfileId: string): string | null {
+  /** Get the most recent session ID for an agent in a conversation,
+   *  filtered by provider to prevent cross-provider session ID pollution.
+   *  Uses OR provider IS NULL to maintain backward compatibility with
+   *  records created before the provider column was added. */
+  getLastSessionId(conversationId: string, agentProfileId: string, providerType?: string): string | null {
+    if (providerType) {
+      const row = this.getDb().prepare(
+        `SELECT session_id FROM agent_task_queue
+         WHERE conversation_id = ? AND agent_profile_id = ?
+           AND session_id IS NOT NULL
+           AND (provider = ? OR provider IS NULL)
+         ORDER BY completed_at DESC
+         LIMIT 1`
+      ).get(conversationId, agentProfileId, providerType) as { session_id: string | null } | undefined
+      return row?.session_id ?? null
+    }
+    // Fallback: no provider filter (backward compatible for callers that haven't migrated)
     const row = this.getDb().prepare(
       `SELECT session_id FROM agent_task_queue
        WHERE conversation_id = ? AND agent_profile_id = ? AND session_id IS NOT NULL
@@ -364,6 +390,7 @@ export class TaskQueue {
       id: row.id as string,
       conversationId: row.conversation_id as string,
       agentProfileId: row.agent_profile_id as string,
+      providerType: (row.provider as string) ?? null,
       message: row.message as string,
       context: row.context as string | null,
       status: row.status as TaskStatus,

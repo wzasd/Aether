@@ -44,6 +44,7 @@ export type RuntimeTerminationReason = 'completed' | 'aborted' | 'crashed' | 'zo
 export type ObservabilityEventName =
   | 'runtime:started'
   | 'runtime:terminated'
+  | 'runtime:session_id_rejected'
   | 'runtime:binary_resolved'
   | 'runtime:binary_not_found'
   | 'runtime:model_resolved'

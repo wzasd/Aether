@@ -42,7 +42,21 @@ export class OpenCodeProvider extends BaseCLIProvider {
       return super.startSession(config)
     }
 
-    const sessionId = config.sessionId || this.opencodeSessionId || 'oc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
+    // Validate config.sessionId — reject UUID-format IDs from other providers.
+    // OpenCode only accepts `oc-` prefix session IDs. If a UUID is passed
+    // (from cross-provider pollution), discard it and generate a proper `oc-` ID.
+    const validProvidedSessionId = config.sessionId && this.isValidSessionId(config.sessionId)
+      ? config.sessionId
+      : null
+
+    if (config.sessionId && !validProvidedSessionId) {
+      writeObservabilityEvent('runtime:session_id_rejected', {
+        providerType: this.meta.id,
+        sessionId: config.sessionId,
+      })
+    }
+
+    const sessionId = validProvidedSessionId || this.opencodeSessionId || 'oc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
     const sessionConfig = { ...config, sessionId }
     const session: Session = {
       id: sessionId,
