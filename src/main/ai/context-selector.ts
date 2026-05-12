@@ -1,11 +1,24 @@
 import { getDb } from '../core/db'
+import { readdirSync, readFileSync, statSync } from 'fs'
+import { join, extname, relative } from 'path'
 import type { ContextStrategy } from './a2a-types'
+import type { MemoryCategory } from '../ipc/memory-palace'
 
 export interface FileChangeEntry {
   path: string
   status: 'added' | 'modified' | 'deleted'
   additions: number
   deletions: number
+}
+
+/** A documentation file index entry — filename + summary, no full content. */
+export interface DocIndexEntry {
+  /** Relative path from workspace root (e.g. "docs/architecture/ADR-017.md"). */
+  path: string
+  /** First meaningful line or truncated preview of the doc. */
+  summary: string
+  /** Number of associated memory items (linked via sourceDoc). */
+  memoryCount: number
 }
 
 export interface AgentContextPacket {
@@ -30,7 +43,9 @@ export interface AgentContextPacket {
   projectMemories: Array<{
     title: string
     content: string
+    category: string
   }>
+  projectDocs: DocIndexEntry[]
   recentFileChanges: FileChangeEntry[]
   agentRoster: Array<{ name: string; role: string }>
 }
@@ -45,6 +60,8 @@ export interface ContextSelectorOptions {
   instruction: string
   tokenBudget?: number
   strategy?: ContextStrategy
+  /** Workspace root directory — used for scanning docs/ directory. */
+  workingDir?: string
 }
 
 interface CandidateMessage {
@@ -65,6 +82,31 @@ interface ScoredMessage {
 const DEFAULT_TOKEN_BUDGET = 8000
 const MESSAGE_BUDGET_RATIO = 0.65
 const MEMORY_BUDGET_RATIO = 0.2
+/** Budget ratio for project docs index — lightweight, just filenames + summaries. */
+const DOCS_BUDGET_RATIO = 0.05
+
+// ─── Memory Category Injection Strategy ──────────────────────────────────────
+// Different categories have different importance and should be injected in order.
+// Higher priority categories are included first when token budget is limited.
+
+const CATEGORY_INJECTION_ORDER: MemoryCategory[] = [
+  'core',          // Project identity — always needed
+  'antipatterns',  // Pitfalls — high value, prevents mistakes
+  'conventions',   // Coding conventions — guides implementation
+  'decisions',     // Architecture decisions — contextual relevance
+  'architecture'   // Architecture descriptions — broad context
+]
+
+// Default auto-approve status by category.
+// core/antipatterns auto-activate (low risk of harm).
+// conventions/decisions/architecture require human confirmation (draft).
+export const DEFAULT_STATUS_BY_CATEGORY: Record<MemoryCategory, 'draft' | 'active'> = {
+  core: 'active',
+  antipatterns: 'active',
+  conventions: 'draft',
+  decisions: 'draft',
+  architecture: 'draft'
+}
 
 // Role-specific content patterns for filtering
 const ROLE_FILTER_PATTERNS: Record<string, RegExp[]> = {
@@ -191,13 +233,171 @@ function loadRecentMessages(conversationId: string): CandidateMessage[] {
   }))
 }
 
-function loadProjectMemories(workspaceId: string): Array<{ title: string; content: string }> {
+function loadProjectMemories(
+  workspaceId: string,
+  keywords: string[] = [],
+  toAgentRole: string = ''
+): Array<{ title: string; content: string; category: string }> {
   const db = getDb()
-  return db
+
+  // Load all active memories with category, then apply category-aware filtering
+  const allMemories = db
     .prepare(
-      `SELECT title, content FROM project_memory_items WHERE workspace_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 10`
+      `SELECT title, content, COALESCE(NULLIF(category, 'general'), kind) AS category
+       FROM project_memory_items
+       WHERE workspace_id = ? AND status = 'active'
+       ORDER BY updated_at DESC`
     )
-    .all(workspaceId) as Array<{ title: string; content: string }>
+    .all(workspaceId) as Array<{ title: string; content: string; category: string }>
+
+  // Sort by category injection priority — core/antipatterns first
+  const categoryOrderIndex = new Map(
+    CATEGORY_INJECTION_ORDER.map((cat, idx) => [cat, idx])
+  )
+  const defaultIndex = CATEGORY_INJECTION_ORDER.length
+
+  const sorted = [...allMemories].sort((a, b) => {
+    const aIdx = categoryOrderIndex.get(a.category as MemoryCategory) ?? defaultIndex
+    const bIdx = categoryOrderIndex.get(b.category as MemoryCategory) ?? defaultIndex
+    // Within same priority, boost memories that match keywords or role
+    if (aIdx !== bIdx) return aIdx - bIdx
+    const aScore = keywordOverlapScore(a.content, keywords) + (roleKeywordFilter(a.content, toAgentRole) ? 0.1 : 0)
+    const bScore = keywordOverlapScore(b.content, keywords) + (roleKeywordFilter(b.content, toAgentRole) ? 0.1 : 0)
+    return bScore - aScore
+  })
+
+  return sorted
+}
+
+// ─── Project Docs Index ────────────────────────────────────────────────────────
+// Scan docs/ directory for documentation files and build a lightweight index.
+// Each entry is just filename + first-line summary + memory count.
+// Full content is NOT injected — Agent reads docs on demand.
+
+/** File extensions considered as project documentation. */
+const DOC_EXTENSIONS = new Set(['.md', '.txt', '.rst', '.adoc'])
+
+/** Maximum characters for a single doc summary line. */
+const DOC_SUMMARY_MAX_LENGTH = 120
+
+/** Maximum directory depth for doc scanning. */
+const DOC_MAX_DEPTH = 2
+
+/** Maximum number of doc entries to include. */
+const DOC_MAX_ENTRIES = 20
+
+function loadProjectDocs(
+  workspaceId: string,
+  workingDir?: string
+): DocIndexEntry[] {
+  // 1. Count memory items per sourceDoc from DB
+  const db = getDb()
+  const memoryCounts = new Map<string, number>()
+  const countRows = db
+    .prepare(
+      `SELECT source_doc, COUNT(*) AS cnt
+       FROM project_memory_items
+       WHERE workspace_id = ? AND source_doc IS NOT NULL AND status = 'active'
+       GROUP BY source_doc`
+    )
+    .all(workspaceId) as Array<{ source_doc: string; cnt: number }>
+
+  for (const row of countRows) {
+    memoryCounts.set(row.source_doc, row.cnt)
+  }
+
+  // 2. Scan docs/ directory if workingDir is available
+  if (!workingDir) {
+    // Fallback: only return docs that have associated memories
+    return Array.from(memoryCounts.entries())
+      .map(([docPath, cnt]) => ({ path: docPath, summary: '', memoryCount: cnt }))
+      .sort((a, b) => b.memoryCount - a.memoryCount)
+      .slice(0, DOC_MAX_ENTRIES)
+  }
+
+  const docsDir = join(workingDir, 'docs')
+  const entries: DocIndexEntry[] = []
+
+  try {
+    walkDocDir(docsDir, workingDir, 0, entries, memoryCounts)
+  } catch {
+    // docs/ directory doesn't exist or isn't readable — return memory-linked docs only
+    memoryCounts.forEach((cnt, docPath) => {
+      entries.push({ path: docPath, summary: '', memoryCount: cnt })
+    })
+  }
+
+  // Sort: docs with memories first, then alphabetically
+  entries.sort((a, b) => {
+    if (a.memoryCount !== b.memoryCount) return b.memoryCount - a.memoryCount
+    return a.path.localeCompare(b.path)
+  })
+
+  return entries.slice(0, DOC_MAX_ENTRIES)
+}
+
+function walkDocDir(
+  dir: string,
+  workspaceRoot: string,
+  depth: number,
+  entries: DocIndexEntry[],
+  memoryCounts: Map<string, number>
+): void {
+  if (depth > DOC_MAX_DEPTH) return
+
+  let items: string[]
+  try {
+    items = readdirSync(dir)
+  } catch {
+    return
+  }
+
+  for (const item of items) {
+    // Skip hidden files and node_modules
+    if (item.startsWith('.') || item === 'node_modules') continue
+
+    const fullPath = join(dir, item)
+    let stat
+    try { stat = statSync(fullPath) } catch { continue }
+
+    if (stat.isDirectory()) {
+      walkDocDir(fullPath, workspaceRoot, depth + 1, entries, memoryCounts)
+    } else if (stat.isFile() && DOC_EXTENSIONS.has(extname(item).toLowerCase())) {
+      const relPath = relative(workspaceRoot, fullPath)
+      const summary = extractDocSummary(fullPath)
+      const memoryCount = memoryCounts.get(relPath) ?? 0
+      entries.push({ path: relPath, summary, memoryCount })
+    }
+  }
+}
+
+/** Extract first meaningful line from a doc file as summary. */
+function extractDocSummary(filePath: string): string {
+  try {
+    const content = readFileSync(filePath, 'utf8')
+    const lines = content.split('\n')
+    // Skip blank lines and YAML frontmatter
+    let inFrontmatter = false
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (trimmed === '---') {
+        inFrontmatter = !inFrontmatter
+        continue
+      }
+      if (inFrontmatter) continue
+      if (!trimmed) continue
+      // Skip markdown heading markers for the summary text
+      const text = trimmed.replace(/^#+\s*/, '')
+      if (text.length > 0) {
+        return text.length > DOC_SUMMARY_MAX_LENGTH
+          ? text.slice(0, DOC_SUMMARY_MAX_LENGTH) + '...'
+          : text
+      }
+    }
+    return ''
+  } catch {
+    return ''
+  }
 }
 
 function loadRecentFileChanges(conversationId: string): FileChangeEntry[] {
@@ -447,6 +647,7 @@ export function buildContextPacket(opts: ContextSelectorOptions): AgentContextPa
     taskState: { goal: '', completed: [], pending: [], decisions: [], blockers: [] },
     relevantMessages: [],
     projectMemories: [],
+    projectDocs: [],
     recentFileChanges: [],
     agentRoster: []
   }
@@ -506,10 +707,10 @@ export function buildContextPacket(opts: ContextSelectorOptions): AgentContextPa
     }
   }
 
-  // 6. Load project memories
+  // 6. Load project memories — category-aware injection with keyword boosting
   const workspaceId = getWorkspaceId(conversationId)
   if (workspaceId) {
-    const memories = loadProjectMemories(workspaceId)
+    const memories = loadProjectMemories(workspaceId, keywords, toAgentRole)
     const memoryBudget = Math.floor(tokenBudget * MEMORY_BUDGET_RATIO)
     let memTokens = 0
     for (const m of memories) {
@@ -535,6 +736,21 @@ export function buildContextPacket(opts: ContextSelectorOptions): AgentContextPa
   // 9. Load agent roster for this workspace
   if (workspaceId) {
     packet.agentRoster = loadAgentRoster(workspaceId)
+  }
+
+  // 10. Load project docs index — lightweight filenames + summaries
+  if (workspaceId) {
+    const docsBudget = Math.floor(tokenBudget * DOCS_BUDGET_RATIO)
+    const allDocs = loadProjectDocs(workspaceId, opts.workingDir)
+    let docsTokens = 0
+    for (const doc of allDocs) {
+      const line = doc.summary
+        ? `${doc.path} — ${doc.summary}${doc.memoryCount > 0 ? ` (${doc.memoryCount} memories)` : ''}`
+        : `${doc.path}${doc.memoryCount > 0 ? ` (${doc.memoryCount} memories)` : ''}`
+      docsTokens += estimateTokens(line)
+      if (docsTokens > docsBudget) break
+      packet.projectDocs.push(doc)
+    }
   }
 
   return packet
@@ -632,15 +848,50 @@ function renderProgressSection(
 }
 
 function renderMemorySection(
-  memories: Array<{ title: string; content: string }>
+  memories: Array<{ title: string; content: string; category: string }>
 ): string | null {
   if (memories.length === 0) return null
 
-  const sections: string[] = ['[PROJECT MEMORY]']
-  for (const mem of memories) {
-    sections.push(`### ${mem.title}`)
-    sections.push(mem.content.slice(0, 500))
+  // Group memories by category for structured display
+  const categoryLabels: Record<string, string> = {
+    core: 'Core Facts',
+    antipatterns: 'Pitfalls & Lessons',
+    conventions: 'Conventions',
+    decisions: 'Decisions',
+    architecture: 'Architecture'
   }
+
+  const grouped = new Map<string, Array<{ title: string; content: string }>>()
+  for (const mem of memories) {
+    const cat = mem.category || 'general'
+    if (!grouped.has(cat)) grouped.set(cat, [])
+    grouped.get(cat)!.push({ title: mem.title, content: mem.content })
+  }
+
+  const sections: string[] = ['[PROJECT MEMORY]']
+
+  // Render in category priority order
+  for (const cat of CATEGORY_INJECTION_ORDER) {
+    const items = grouped.get(cat)
+    if (!items || items.length === 0) continue
+    const label = categoryLabels[cat] ?? cat
+    sections.push(`\n## ${label}`)
+    for (const item of items) {
+      sections.push(`### ${item.title}`)
+      sections.push(item.content.slice(0, 500))
+    }
+    grouped.delete(cat)
+  }
+
+  // Render any remaining categories not in the priority list
+  grouped.forEach((items, cat) => {
+    const label = categoryLabels[cat] ?? cat
+    sections.push(`\n## ${label}`)
+    for (const item of items) {
+      sections.push(`### ${item.title}`)
+      sections.push(item.content.slice(0, 500))
+    }
+  })
 
   return sections.join('\n')
 }
@@ -654,6 +905,23 @@ function renderAgentRosterSection(
   for (const agent of roster) {
     sections.push(`- @${agent.name} (${agent.role})`)
   }
+
+  return sections.join('\n')
+}
+
+function renderProjectDocsSection(docs: DocIndexEntry[]): string | null {
+  if (docs.length === 0) return null
+
+  const sections: string[] = ['[PROJECT DOCS]']
+  for (const doc of docs) {
+    const memoryTag = doc.memoryCount > 0 ? ` (${doc.memoryCount} memories)` : ''
+    if (doc.summary) {
+      sections.push(`- ${doc.path}${memoryTag} — ${doc.summary}`)
+    } else {
+      sections.push(`- ${doc.path}${memoryTag}`)
+    }
+  }
+  sections.push('Use readMessages or file tools to access full content when needed.')
 
   return sections.join('\n')
 }
@@ -689,7 +957,14 @@ export function renderContextPacket(packet: AgentContextPacket): string {
     sections.push(memorySection)
   }
 
-  // Section 5: Agent Roster (only if present)
+  // Section 5: Project Docs Index (only if present)
+  const docsSection = renderProjectDocsSection(packet.projectDocs)
+  if (docsSection) {
+    sections.push('')
+    sections.push(docsSection)
+  }
+
+  // Section 6: Agent Roster (only if present)
   const rosterSection = renderAgentRosterSection(packet.agentRoster)
   if (rosterSection) {
     sections.push('')
