@@ -165,8 +165,11 @@ export class StallDetector {
     this.waitingForUserInput = false
   }
 
-  /** Start periodic stall checking. */
+  /** Start periodic stall checking. Stops any previous monitoring first. */
   startMonitoring(conversationId: string, sessionId?: string): void {
+    // Stop any previous monitoring to prevent stale timers
+    this.stopMonitoring()
+
     this.lastEventAt = Date.now()
     this.lastActivity = 'starting'
     this.pendingToolCall = false

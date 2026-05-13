@@ -362,8 +362,12 @@ ${toolDescs}`
   private waitForReplyWithStreaming(sessionId: string, conversationId: string): Promise<string> {
     const REPLY_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
 
-    // Start stall detection monitoring for this reply
+    // Start stall detection monitoring for this reply.
+    // Stop any previous monitoring first as a safety net — if a prior
+    // temporary session's safeResolve never fired (process crash without
+    // done/error event), the timer would still be running.
     if (this.stallDetector) {
+      this.stallDetector.stopMonitoring()
       this.stallDetector.startMonitoring(conversationId, sessionId)
     }
 
@@ -571,6 +575,11 @@ ${toolDescs}`
       return lastReply || ''
     } finally {
       this.observationSessionId = null
+      // Safety net: stop stall detector monitoring if safeResolve never fired
+      // (e.g. process crash without done/error event). Without this, the
+      // stallDetector timer keeps running and may interfere with the next
+      // temporary session's monitoring cycle.
+      this.stallDetector?.stopMonitoring()
       await aiEngine.endSession(tempSession.id).catch(() => {})
     }
   }
