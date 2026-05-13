@@ -20,6 +20,7 @@ import { diagnoseProviderError } from './provider-error-diagnostics'
 import { daemon } from '../daemon/daemon'
 import { bus, type BusHandler } from '../daemon/event-bus'
 import { providerRegistry } from './provider-registry'
+import { generateResumeContext } from './resume-context'
 
 // Layer 1
 import { parseIntents } from './intent-parser'
@@ -75,6 +76,11 @@ class AgentOrchestrator {
   // Key: `conversationId:profileId:providerType`. Value includes a config fingerprint so
   // stale entries are discarded when provider/model/workingDir/permissionMode change.
   private primarySessionIds: Map<string, { sessionId: string; fingerprint: string }> = new Map()
+  // Persists a concise textual summary of the previous turn for spawn providers
+  // that do not support cross-turn session resume (supportsCrossTurnResume = false).
+  // Key: `conversationId:profileId:providerType`. Value is a structured text block
+  // injected into the next turn's system prompt.
+  private resumeContexts: Map<string, string> = new Map()
   private zombieTaskIds: Set<string> = new Set()
   // Completion hooks for chain callbacks — registered when an agent-scan task
   // is scheduled, invoked when the task completes to create a feedback task
@@ -297,6 +303,22 @@ class AgentOrchestrator {
     const effectiveConfig: SessionConfig = resumeSessionId
       ? { ...sessionConfig, sessionId: resumeSessionId }
       : sessionConfig
+
+    // For spawn providers, inject resumeContext text into appendSystemPrompt
+    // so the agent knows what happened in the previous turn.
+    // Note: effectiveConfig is a shallow copy via spread (line 303-305), so
+    // mutating appendSystemPrompt here does not affect the original sessionConfig.
+    if (!providerSupportsResume) {
+      const resumeContext = this.resumeContexts.get(resumeKey)
+      if (resumeContext) {
+        const resumeBlock = `## 上一轮上下文摘要\n\n${resumeContext}\n\n请基于以上上下文继续工作。`
+        const existingAppend = effectiveConfig.appendSystemPrompt
+        effectiveConfig.appendSystemPrompt = existingAppend
+          ? `${existingAppend}\n\n${resumeBlock}`
+          : resumeBlock
+      }
+    }
+
     this.baseConfigs.set(conversationId, effectiveConfig)
 
     // Memory injection
@@ -399,6 +421,9 @@ class AgentOrchestrator {
     // Clear stored session IDs so an aborted session is never resumed
     for (const key of Array.from(this.primarySessionIds.keys())) {
       if (key.startsWith(`${conversationId}:`)) this.primarySessionIds.delete(key)
+    }
+    for (const key of Array.from(this.resumeContexts.keys())) {
+      if (key.startsWith(`${conversationId}:`)) this.resumeContexts.delete(key)
     }
     const prefix = `${conversationId}:`
     this.runtimes.forEach((runtime, key) => {
@@ -1292,13 +1317,26 @@ class AgentOrchestrator {
       this.send(webContents, 'a2a:taskCompleted', { taskId: task.id, conversationId })
       this.extractMemoryCandidates(conversationId, profile)
 
+      // Generate resumeContext for spawn providers so the next turn knows
+      // what happened previously, even though the process was spawned fresh.
+      const providerAtEnd = providerRegistry.get(baseConfig.providerType)
+      if (task.depth === 0 && !task.readOnly && !(providerAtEnd?.meta.supportsCrossTurnResume ?? false)) {
+        const resumeKey = `${conversationId}:${profile.id}:${baseConfig.providerType}`
+        const contextText = generateResumeContext({
+          task,
+          accumulatedOutput,
+          terminalError,
+          userMessage: task.message,
+        })
+        this.resumeContexts.set(resumeKey, contextText)
+      }
+
       // Persist session ID for primary agent so the next user turn can --resume
       // instead of injecting conversation history. Store with a config fingerprint
       // so stale entries are discarded if provider/model/workingDir/permissionMode change.
       // Only store for providers that support cross-turn resume (Claude/OpenCode).
       // Spawn providers (Kimi/Codex/Gemini/etc.) start fresh each turn to avoid
       // stale --resume / --session crashes.
-      const providerAtEnd = providerRegistry.get(baseConfig.providerType)
       if (task.depth === 0 && !task.readOnly && sessionIdAtStart && (providerAtEnd?.meta.supportsCrossTurnResume ?? false)) {
         const fingerprint = `${baseConfig.providerType}:${baseConfig.model}:${baseConfig.workingDir}:${baseConfig.permissionMode}`
         // FR-2: primarySessionIds key includes providerType for per-provider session isolation
@@ -1317,6 +1355,19 @@ class AgentOrchestrator {
       if (capsule) this.capsuleManager.complete(capsule.id, 'needs_owner', String(error))
       this.invokeCompletionHook(task, accumulatedOutput || String(error))
       this.send(webContents, 'a2a:taskCompleted', { taskId: task.id, conversationId, error: String(error) })
+
+      // Generate resumeContext even on failure so the next turn knows what went wrong.
+      const providerAtCatch = providerRegistry.get(baseConfig.providerType)
+      if (task.depth === 0 && !task.readOnly && !(providerAtCatch?.meta.supportsCrossTurnResume ?? false)) {
+        const resumeKey = `${conversationId}:${profile.id}:${baseConfig.providerType}`
+        const contextText = generateResumeContext({
+          task,
+          accumulatedOutput,
+          terminalError: terminalError || String(error),
+          userMessage: task.message,
+        })
+        this.resumeContexts.set(resumeKey, contextText)
+      }
 
       // Clear stored session ID so a failed session is never blindly resumed.
       if (task.depth === 0) {

@@ -9,6 +9,7 @@ import type { ParsedMention } from './a2a-types'
 import { OPEN_FLOOR_INSTRUCTION, OPEN_FLOOR_ALLOWED_TOOLS } from './prompts/open-floor'
 import { agentMemory } from '../daemon/agent-memory'
 import { StallDetector } from './stall-detector'
+import { hasResumeContext } from './resume-context'
 import { diagnoseProviderError } from './provider-error-diagnostics'
 import { writeObservabilityEvent } from '../core/logging'
 
@@ -125,6 +126,13 @@ export class AgentRuntime extends EventEmitter {
       config,
       overrides
     )
+
+    // Merge orchestrator-provided appendSystemPrompt (e.g., resumeContext)
+    // with idempotency guard: if the runtime-generated prompt already contains
+    // a resumeContext block (crash-retry scenario), skip re-injection.
+    if (config.appendSystemPrompt && !hasResumeContext(systemPromptParts.join('\n\n'))) {
+      systemPromptParts.push(config.appendSystemPrompt)
+    }
 
     const fullConfig: SessionConfig = {
       ...config,
