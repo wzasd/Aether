@@ -16,8 +16,10 @@ import { ContinuityCapsuleManager, formatContinuationPrompt } from './continuity
 import { ReflowOrchestrator } from './reflow-orchestrator'
 import { A2AMemoryDistiller } from './a2a-memory-distiller'
 import { writeObservabilityEvent } from '../core/logging'
+import { diagnoseProviderError } from './provider-error-diagnostics'
 import { daemon } from '../daemon/daemon'
 import { bus, type BusHandler } from '../daemon/event-bus'
+import { providerRegistry } from './provider-registry'
 
 // Layer 1
 import { parseIntents } from './intent-parser'
@@ -276,10 +278,18 @@ class AgentOrchestrator {
     // Check if primary agent has a resumable session from a previous turn.
     // Discard the stored entry if provider/model/workingDir/permissionMode changed.
     // FR-2: resumeKey includes providerType for per-provider session isolation
+    // Spawn providers (Kimi/Codex/Gemini/etc.) do not support cross-turn resume
+    // because their process exits after each turn; passing stale session IDs causes
+    // --resume crashes on the second turn. Only PTY/stateful providers (Claude/OpenCode)
+    // persist session IDs.
     const resumeKey = `${conversationId}:${profile.id}:${sessionConfig.providerType}`
     const configFingerprint = `${sessionConfig.providerType}:${sessionConfig.model}:${sessionConfig.workingDir}:${sessionConfig.permissionMode}`
+    const provider = providerRegistry.get(sessionConfig.providerType)
+    const providerSupportsResume = provider?.meta.supportsCrossTurnResume ?? false
     const stored = this.primarySessionIds.get(resumeKey)
-    const resumeSessionId = stored?.fingerprint === configFingerprint ? stored.sessionId : undefined
+    const resumeSessionId = (providerSupportsResume && stored?.fingerprint === configFingerprint)
+      ? stored.sessionId
+      : undefined
     if (stored && !resumeSessionId) this.primarySessionIds.delete(resumeKey)
     const isResuming = Boolean(resumeSessionId)
 
@@ -1285,7 +1295,11 @@ class AgentOrchestrator {
       // Persist session ID for primary agent so the next user turn can --resume
       // instead of injecting conversation history. Store with a config fingerprint
       // so stale entries are discarded if provider/model/workingDir/permissionMode change.
-      if (task.depth === 0 && !task.readOnly && sessionIdAtStart) {
+      // Only store for providers that support cross-turn resume (Claude/OpenCode).
+      // Spawn providers (Kimi/Codex/Gemini/etc.) start fresh each turn to avoid
+      // stale --resume / --session crashes.
+      const providerAtEnd = providerRegistry.get(baseConfig.providerType)
+      if (task.depth === 0 && !task.readOnly && sessionIdAtStart && (providerAtEnd?.meta.supportsCrossTurnResume ?? false)) {
         const fingerprint = `${baseConfig.providerType}:${baseConfig.model}:${baseConfig.workingDir}:${baseConfig.permissionMode}`
         // FR-2: primarySessionIds key includes providerType for per-provider session isolation
         const sessionKey = `${conversationId}:${profile.id}:${baseConfig.providerType}`

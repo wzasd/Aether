@@ -27,7 +27,8 @@ const GEMINI_META: ProviderMeta = {
     trusted: ['--approval-mode', 'yolo']
   },
   supportsStreamJson: true,
-  supportsInteractive: false
+  supportsInteractive: false,
+  supportsCrossTurnResume: false
 }
 
 interface GeminiSessionEntry {

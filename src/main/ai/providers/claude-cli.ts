@@ -23,7 +23,8 @@ const CLAUDE_META: ProviderMeta = {
     trusted: ['bypassPermissions']
   },
   supportsStreamJson: true,
-  supportsInteractive: true
+  supportsInteractive: true,
+  supportsCrossTurnResume: true
 }
 
 export class ClaudeProvider extends BaseCLIProvider {

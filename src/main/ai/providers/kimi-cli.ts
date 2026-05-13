@@ -26,7 +26,8 @@ const KIMI_META: ProviderMeta = {
     trusted: ['--yolo']
   },
   supportsStreamJson: true,
-  supportsInteractive: true
+  supportsInteractive: true,
+  supportsCrossTurnResume: false
 }
 
 interface KimiSessionEntry {

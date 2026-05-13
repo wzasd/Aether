@@ -28,7 +28,8 @@ const OPENCODE_META: ProviderMeta = {
     trusted: ['--dangerously-skip-permissions']
   },
   supportsStreamJson: true,
-  supportsInteractive: true
+  supportsInteractive: true,
+  supportsCrossTurnResume: true
 }
 
 export class OpenCodeProvider extends BaseCLIProvider {

@@ -31,6 +31,11 @@ export interface ProviderMeta {
   permissionFlags: PermissionFlagMap
   supportsStreamJson: boolean
   supportsInteractive: boolean
+  /** Whether this provider supports resuming sessions across user turns.
+   *  PTY/long-running providers (Claude) and stateful CLI providers (OpenCode)
+   *  should set this to true. Per-turn spawn providers (Kimi, Codex, Gemini,
+   *  Copilot, Cursor) should set false to avoid stale --resume crashes. */
+  supportsCrossTurnResume?: boolean
 }
 
 // ─── Provider Config (non-sensitive, stored in DB) ───

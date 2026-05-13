@@ -9,6 +9,8 @@ import type { ParsedMention } from './a2a-types'
 import { OPEN_FLOOR_INSTRUCTION, OPEN_FLOOR_ALLOWED_TOOLS } from './prompts/open-floor'
 import { agentMemory } from '../daemon/agent-memory'
 import { StallDetector } from './stall-detector'
+import { diagnoseProviderError } from './provider-error-diagnostics'
+import { writeObservabilityEvent } from '../core/logging'
 
 export interface AgentMentionEvent {
   type: 'agent_mention'
@@ -229,9 +231,29 @@ export class AgentRuntime extends EventEmitter {
         return { relevanceScore: relevance.score }
       }
       return { reply: raw, relevanceScore: relevance.score }
-    } catch {
+    } catch (error) {
+      // Diagnose the provider error and emit structured observability event
+      // Previously this catch silently swallowed errors, causing "agent not replying" with no logs
+      const rawMessage = error instanceof Error ? error.message : String(error)
+      const providerId = this.session?.providerType ?? this.profile.model ?? 'unknown'
+      const diagnostic = diagnoseProviderError(rawMessage, providerId)
+
+      writeObservabilityEvent('provider:error', {
+        profileId: this.profile.id,
+        runtimeKey: providerId,
+        conversationId: obs.conversationId,
+        category: diagnostic.category,
+        severity: diagnostic.severity,
+        fingerprint: diagnostic.fingerprint,
+        scrubbedMessage: diagnostic.scrubbedMessage,
+        retryable: diagnostic.retryable,
+        userAction: diagnostic.userAction,
+        source: 'onObservation',
+      })
+
+      console.error(`[AgentRuntime] ${this.profile.name} observation failed (${diagnostic.category}/${diagnostic.severity}):`, diagnostic.scrubbedMessage)
+
       return { relevanceScore: relevance.score }
-      // Swallow generation errors — orchestrator will record as skipped
     }
   }
 

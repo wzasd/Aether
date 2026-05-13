@@ -25,7 +25,8 @@ const CURSOR_META: ProviderMeta = {
     trusted: ['--yolo']
   },
   supportsStreamJson: true,
-  supportsInteractive: true
+  supportsInteractive: true,
+  supportsCrossTurnResume: false
 }
 
 interface CursorSessionEntry {

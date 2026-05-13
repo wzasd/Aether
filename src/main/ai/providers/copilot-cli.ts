@@ -25,7 +25,8 @@ const COPILOT_META: ProviderMeta = {
     trusted: ['--allow-all-tools', '--allow-all-paths']
   },
   supportsStreamJson: true,
-  supportsInteractive: true
+  supportsInteractive: true,
+  supportsCrossTurnResume: false
 }
 
 interface CopilotSessionEntry {

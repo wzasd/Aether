@@ -25,7 +25,8 @@ const CODEX_META: ProviderMeta = {
     trusted: []
   },
   supportsStreamJson: true,
-  supportsInteractive: true
+  supportsInteractive: true,
+  supportsCrossTurnResume: false
 }
 
 interface CodexSessionEntry {
