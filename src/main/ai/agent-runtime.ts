@@ -8,6 +8,7 @@ import type { AIEvent } from './types'
 import type { ParsedMention } from './a2a-types'
 import { OPEN_FLOOR_INSTRUCTION, OPEN_FLOOR_ALLOWED_TOOLS } from './prompts/open-floor'
 import { agentMemory } from '../daemon/agent-memory'
+import { StallDetector } from './stall-detector'
 
 export interface AgentMentionEvent {
   type: 'agent_mention'
@@ -57,6 +58,7 @@ export class AgentRuntime extends EventEmitter {
   private lastProviderType: string = ''
   private observationSessionId: string | null = null
   private _suspended = false // Aligns with Slock: explicit start/stop lifecycle
+  private stallDetector: StallDetector | null = null
 
   constructor(profile: AgentProfile) {
     super()
@@ -131,6 +133,14 @@ export class AgentRuntime extends EventEmitter {
 
     this.session = await aiEngine.startSession(fullConfig)
     this.attachEventHandler()
+
+    // Initialize stall detector for this provider
+    this.stallDetector = new StallDetector(
+      this.profile.id,
+      this.profile.name,
+      resolved.providerType
+    )
+
     return this.session
   }
 
@@ -352,6 +362,11 @@ ${toolDescs}`
   private waitForReplyWithStreaming(sessionId: string, conversationId: string): Promise<string> {
     const REPLY_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
 
+    // Start stall detection monitoring for this reply
+    if (this.stallDetector) {
+      this.stallDetector.startMonitoring(conversationId, sessionId)
+    }
+
     return new Promise<string>((resolve) => {
       let settled = false
       let accumulatedText = '' // Pure text only — excludes tool-call XML
@@ -361,10 +376,19 @@ ${toolDescs}`
         settled = true
         clearTimeout(timeoutHandle)
         aiEngine.offEvent(sessionId, handler)
+        // Stop stall detection monitoring when reply completes
+        if (this.stallDetector) {
+          this.stallDetector.stopMonitoring()
+        }
         resolve(value)
       }
 
       const handler = (event: AIEvent): void => {
+        // Forward every event to stall detector for activity tracking
+        if (this.stallDetector) {
+          this.stallDetector.recordEvent(event)
+        }
+
         // Track tool call boundaries — suppress streaming inside tool calls
         if (event.type === 'tool_start') {
           insideToolCall = true

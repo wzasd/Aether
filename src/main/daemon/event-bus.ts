@@ -24,7 +24,12 @@ export type BusEventType =
   | 'open_floor:closed'
   | 'conversation:created'
   | 'conversation:updated'
+  | 'conversation:completed'
   | 'system:abort'
+  | 'runtime.progress.stalled'
+  | 'runtime.recovery.started'
+  | 'runtime.recovery.completed'
+  | 'runtime.recovery.failed'
 
 export interface BusEvent {
   type: BusEventType
