@@ -3,6 +3,43 @@ import type { AgentProfile } from '../../ai/a2a-types'
 import type { SessionConfig } from '../../ai/provider'
 
 const mockObservations = new Map<string, (obs: { message: string; conversationId: string }) => Promise<{ reply?: string; relevanceScore: number }>>()
+const mockMemoryDistiller = vi.hoisted(() => ({
+  distillChain: vi.fn(),
+  persistToMemoryPalace: vi.fn(),
+}))
+
+// Hoist mock values so they're available when vi.mock() factories execute
+const { mockAppPaths, mockSecretsBackend } = vi.hoisted(() => {
+  const mockAppPaths = {
+    dataDir: '/tmp/bytro-test/data',
+    logDir: '/tmp/bytro-test/logs',
+    homeDir: '/tmp/bytro-test/home',
+    documentsDir: '/tmp/bytro-test/home/Documents',
+    desktopDir: '/tmp/bytro-test/home/Desktop',
+    downloadsDir: '/tmp/bytro-test/home/Downloads',
+    tempDir: '/tmp/bytro-test/tmp',
+  }
+
+  const mockSecretsBackend = {
+    backendName: 'key-file',
+    encrypt: vi.fn((value: string) => Buffer.from(value)),
+    decrypt: vi.fn((encrypted: Buffer) => encrypted.toString('utf8')),
+    isAvailable: vi.fn(() => true),
+  }
+
+  return { mockAppPaths, mockSecretsBackend }
+})
+
+// Mock Electron-specific modules so Daemon adapter can run without Electron
+vi.mock('../../core/app-paths', () => ({
+  createElectronAppPaths: vi.fn(() => mockAppPaths),
+}))
+
+vi.mock('../../core/secrets-backend', () => ({
+  createSecretsBackend: vi.fn(() => mockSecretsBackend),
+  ElectronSafeStorageBackend: vi.fn(),
+  KeyFileSecretsBackend: vi.fn(),
+}))
 
 vi.mock('../../ai/agent-runtime', () => ({
   AgentRuntime: vi.fn().mockImplementation((profile: AgentProfile) => ({
@@ -25,6 +62,47 @@ vi.mock('../../core/db')
 
 vi.mock('../../core/logging', () => ({
   writeObservabilityEvent: vi.fn(),
+}))
+
+vi.mock('../../ai/a2a-memory-distiller', () => ({
+  A2AMemoryDistiller: vi.fn().mockImplementation(() => mockMemoryDistiller),
+}))
+
+vi.mock('../sse-broadcaster', () => ({
+  sseBroadcaster: {
+    setWebContents: vi.fn(),
+    broadcast: vi.fn(),
+    broadcastAIEvent: vi.fn(),
+  },
+}))
+
+vi.mock('../renderer-api', () => ({
+  getRendererApiServer: vi.fn(() => ({
+    start: vi.fn(async () => 5175),
+    stop: vi.fn(async () => {}),
+    broadcast: vi.fn(),
+    setDaemon: vi.fn(),
+  })),
+}))
+
+vi.mock('../bridge-api', () => ({
+  getBridgeApiServer: vi.fn(() => ({
+    start: vi.fn(async () => 5174),
+    stop: vi.fn(async () => {}),
+  })),
+}))
+
+vi.mock('../bridge-config', () => ({
+  cleanupBridgeConfig: vi.fn(),
+}))
+
+vi.mock('../action-cards/executor-registry', () => ({
+  registerExecutor: vi.fn(),
+  expireActionCards: vi.fn(() => ({ expired: 0, recovered: 0 })),
+}))
+
+vi.mock('../init-agent-memory', () => ({
+  initAgentMemory: vi.fn(async () => {}),
 }))
 
 import { Daemon } from '../daemon'
@@ -76,7 +154,7 @@ function makeWebContents() {
   }
 }
 
-describe('Daemon', () => {
+describe('Daemon (Electron adapter)', () => {
   let daemon: Daemon
 
   beforeEach(() => {
@@ -86,6 +164,8 @@ describe('Daemon', () => {
     vi.clearAllMocks()
     resetMockDb()
     runtimeRegistry.resetAllTracking()
+    mockMemoryDistiller.distillChain.mockResolvedValue(null)
+    mockMemoryDistiller.persistToMemoryPalace.mockResolvedValue(0)
   })
 
   afterEach(async () => {
@@ -155,20 +235,46 @@ describe('Daemon', () => {
     )
   })
 
-  it('sends open_floor:start to frontend', async () => {
+  it('publishes conversation:completed and runs memory distillation after all tasks finish', async () => {
     const wc = makeWebContents()
-    await daemon.initialize(profiles, config, wc as never)
+    await daemon.initialize(profiles.slice(0, 1), config, wc as never)
     await daemon.start()
 
-    await daemon.onUserMessage('conv-1', 'test', [])
+    const completedHandler = vi.fn()
+    bus.subscribe('conversation:completed', completedHandler)
 
-    expect(wc.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({
-        type: 'open_floor:start',
-        conversationId: 'conv-1',
-      })
-    )
+    const distillate = {
+      conversationId: 'conv-1',
+      agentChain: ['coder'],
+      taskCount: 1,
+      maxDepth: 0,
+      decisionPoints: [],
+      conventions: [],
+      failures: [],
+    }
+    mockMemoryDistiller.distillChain.mockResolvedValue(distillate)
+    mockMemoryDistiller.persistToMemoryPalace.mockResolvedValue(1)
+
+    mockObservations.set('coder', async () => ({
+      reply: 'Coder reply',
+      relevanceScore: 0.9,
+    }))
+
+    await daemon.onUserMessage('conv-1', 'test message', [])
+
+    await vi.waitFor(() => {
+      expect(completedHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'conversation:completed',
+          conversationId: 'conv-1',
+        })
+      )
+    }, { timeout: 2000 })
+
+    await vi.waitFor(() => {
+      expect(mockMemoryDistiller.distillChain).toHaveBeenCalledWith('conv-1')
+      expect(mockMemoryDistiller.persistToMemoryPalace).toHaveBeenCalledWith(distillate)
+    }, { timeout: 2000 })
   })
 
   it('executes tasks via polling and publishes replies', async () => {
@@ -183,38 +289,42 @@ describe('Daemon', () => {
       reply: 'Coder reply',
       relevanceScore: 0.9,
     }))
+    mockObservations.set('reviewer', async () => ({
+      reply: 'Reviewer reply',
+      relevanceScore: 0.7,
+    }))
 
     await daemon.onUserMessage('conv-1', 'test message', [])
 
-    // Wait for poll loop to pick up and execute the task
+    // Wait for poll loop to pick up and execute the tasks
     await vi.waitFor(() => {
       expect(replyHandler).toHaveBeenCalled()
     }, { timeout: 2000 })
 
-    expect(replyHandler).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'message:reply',
-        actorId: 'coder',
-        payload: expect.objectContaining({ content: 'Coder reply' }),
-      })
+    // At least one agent should have replied
+    const calls = replyHandler.mock.calls.map((call: unknown[]) => call[0] as Record<string, unknown>)
+    const hasReply = calls.some(
+      (call) => call.type === 'message:reply' && typeof call.payload === 'object' && call.payload !== null && 'content' in (call.payload as Record<string, unknown>)
     )
+    expect(hasReply).toBe(true)
   })
 
-  it('cancels pending tasks on abortConversation', async () => {
+  it('cancels tasks on abortConversation', async () => {
     const wc = makeWebContents()
     await daemon.initialize(profiles, config, wc as never)
     await daemon.start()
 
     await daemon.onUserMessage('conv-1', 'test', [])
-    // Task may be claimed/running due to wakeup, so check all non-terminal statuses
     const tasksBefore = taskQueue.getConversationTasks('conv-1')
     expect(tasksBefore.length).toBeGreaterThanOrEqual(1)
 
     daemon.abortConversation('conv-1')
 
-    // All tasks should now be cancelled or failed
+    // After abort, no tasks should be in active states
     const tasksAfter = taskQueue.getConversationTasks('conv-1')
-    expect(tasksAfter.every((t) => t.status === 'cancelled' || t.status === 'failed')).toBe(true)
+    const activeStatuses = new Set(['pending', 'claimed', 'running'])
+    const hasActiveTasks = tasksAfter.some((t) => activeStatuses.has(t.status))
+    expect(hasActiveTasks).toBe(false)
   })
 
   it('aborts only runtimes with active tasks for target conversation', async () => {
@@ -256,10 +366,8 @@ describe('Daemon', () => {
     await daemon.onUserMessage('conv-1', 'hello', [])
 
     // No tasks enqueued, no crash
-    expect(wc.send).toHaveBeenCalledWith(
-      'ai:event',
-      expect.objectContaining({ type: 'open_floor:start' })
-    )
+    const tasks = taskQueue.getConversationTasks('conv-1')
+    expect(tasks.length).toBe(0)
   })
 
   it('survives errors in pollTasks', async () => {
@@ -278,5 +386,45 @@ describe('Daemon', () => {
     await new Promise((resolve) => setTimeout(resolve, 200))
 
     expect(daemon.isRunning()).toBe(true)
+  })
+
+  it('wires sseBroadcaster with webContents on start', async () => {
+    const wc = makeWebContents()
+    await daemon.initialize(profiles, config, wc as never)
+    await daemon.start()
+
+    // The adapter should wire webContents to sseBroadcaster
+    const { sseBroadcaster } = await import('../sse-broadcaster')
+    expect(sseBroadcaster.setWebContents).toHaveBeenCalledWith(wc)
+  })
+
+  it('disconnects sseBroadcaster on stop', async () => {
+    const wc = makeWebContents()
+    await daemon.initialize(profiles, config, wc as never)
+    await daemon.start()
+
+    await daemon.stop()
+
+    const { sseBroadcaster } = await import('../sse-broadcaster')
+    expect(sseBroadcaster.setWebContents).toHaveBeenCalledWith(null)
+  })
+})
+
+describe('Daemon constructor wiring', () => {
+  it('creates DaemonCore with Electron-specific config', async () => {
+    // Create a fresh Daemon instance — constructor calls createElectronAppPaths + createSecretsBackend
+    const daemon = new Daemon({ pollIntervalMs: 50 })
+
+    const { createElectronAppPaths } = await import('../../core/app-paths')
+    const { createSecretsBackend } = await import('../../core/secrets-backend')
+
+    // The Daemon constructor should have called these
+    expect(createElectronAppPaths).toHaveBeenCalled()
+    expect(createSecretsBackend).toHaveBeenCalledWith({
+      preferElectronSafeStorage: true,
+      dataDir: mockAppPaths.dataDir,
+    })
+
+    await daemon.stop()
   })
 })

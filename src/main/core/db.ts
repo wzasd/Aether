@@ -15,12 +15,20 @@ import {
 const require = createRequire(import.meta.url)
 const BetterSqlite3 = require('better-sqlite3')
 
-const SCHEMA_VERSION = 28
+const SCHEMA_VERSION = 32
 
 let db: Database.Database
 
 export function initDatabase(): void {
   const dbPath = join(app.getPath('userData'), 'bytro.db')
+  initDatabaseWithPath(dbPath)
+}
+
+/**
+ * Initialize database with an explicit path.
+ * Used by CLI/headless mode where app.getPath() is not available.
+ */
+export function initDatabaseWithPath(dbPath: string): void {
   db = new BetterSqlite3(dbPath) as Database.Database
 
   // Performance optimizations
@@ -366,18 +374,19 @@ function createTables(): void {
       title,
       content,
       kind,
+      category,
       content='project_memory_items',
       content_rowid='rowid'
     );
     CREATE TRIGGER IF NOT EXISTS proj_mem_ai AFTER INSERT ON project_memory_items BEGIN
-      INSERT INTO memory_fts(rowid, title, content, kind) VALUES (new.rowid, new.title, new.content, new.kind);
+      INSERT INTO memory_fts(rowid, title, content, kind, category) VALUES (new.rowid, new.title, new.content, new.kind, COALESCE(new.category, new.kind));
     END;
     CREATE TRIGGER IF NOT EXISTS proj_mem_ad AFTER DELETE ON project_memory_items BEGIN
-      INSERT INTO memory_fts(memory_fts, rowid, title, content, kind) VALUES ('delete', old.rowid, old.title, old.content, old.kind);
+      INSERT INTO memory_fts(memory_fts, rowid, title, content, kind, category) VALUES ('delete', old.rowid, old.title, old.content, old.kind, COALESCE(old.category, old.kind));
     END;
     CREATE TRIGGER IF NOT EXISTS proj_mem_au AFTER UPDATE ON project_memory_items BEGIN
-      INSERT INTO memory_fts(memory_fts, rowid, title, content, kind) VALUES ('delete', old.rowid, old.title, old.content, old.kind);
-      INSERT INTO memory_fts(rowid, title, content, kind) VALUES (new.rowid, new.title, new.content, new.kind);
+      INSERT INTO memory_fts(memory_fts, rowid, title, content, kind, category) VALUES ('delete', old.rowid, old.title, old.content, old.kind, COALESCE(old.category, old.kind));
+      INSERT INTO memory_fts(rowid, title, content, kind, category) VALUES (new.rowid, new.title, new.content, new.kind, COALESCE(new.category, new.kind));
     END;
 
     -- Secrets (encrypted API keys)
@@ -783,6 +792,105 @@ function applyMigrations(): void {
     // Per-provider session ID isolation: add provider column to agent_task_queue
     // so getLastSessionId can filter by provider and prevent cross-provider pollution.
     addMissingColumn('agent_task_queue', 'provider', 'TEXT')
+  }
+
+  if (version < 29) {
+    // Memory Palace Phase 1: add category, tags, source_doc columns to project_memory_items
+    // category: 5 types — core | architecture | conventions | antipatterns | decisions
+    // tags: JSON array for flexible tagging and filtering
+    // source_doc: bridge to source document path (e.g. docs/adr/ADR-017.md)
+    addMissingColumn('project_memory_items', 'category', "TEXT DEFAULT 'general'")
+    addMissingColumn('project_memory_items', 'tags', "TEXT DEFAULT '[]'")
+    addMissingColumn('project_memory_items', 'source_doc', 'TEXT DEFAULT NULL')
+
+    // Backfill category from existing kind column
+    db.prepare("UPDATE project_memory_items SET category = kind WHERE category = 'general' AND kind != 'general'").run()
+  }
+
+  if (version < 30) {
+    // Action Card infrastructure: propose-commit separation for side-effect operations.
+    // Agent proposes mutations (memory activation, config change, agent creation),
+    // human commits before execution. Bypass control plane, non-blocking.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS action_cards (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        conversation_id TEXT,
+        message_id TEXT,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        title TEXT NOT NULL,
+        description TEXT,
+        payload_json TEXT NOT NULL,
+        draft_hint TEXT,
+        dedupe_key TEXT NOT NULL,
+        operation_id TEXT,
+        created_by_agent_id TEXT,
+        approved_by_user_id TEXT,
+        approved_at INTEGER,
+        result_json TEXT,
+        error TEXT,
+        expires_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      )
+    `)
+    // Partial unique index: only one card per (workspace, type, dedupe_key) in active states.
+    // Allows historical records with terminal statuses (executed/rejected/expired) to coexist.
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_action_cards_dedupe
+        ON action_cards (workspace_id, type, dedupe_key)
+        WHERE status IN ('pending', 'executing')
+    `)
+    db.exec('CREATE INDEX IF NOT EXISTS idx_action_cards_workspace_status ON action_cards(workspace_id, status)')
+    db.exec('CREATE INDEX IF NOT EXISTS idx_action_cards_expires ON action_cards(expires_at) WHERE status = \'pending\'')
+  }
+
+  if (version < 31) {
+    // Chat Bridge MCP Sidecar support (ADR-015).
+    // idempotency_key for message deduplication (send_message idempotency).
+    // message_ack_state for per-agent message acknowledgment tracking.
+    addMissingColumn('messages', 'idempotency_key', 'TEXT')
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_idempotency ON messages(idempotency_key) WHERE idempotency_key IS NOT NULL')
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS message_ack_state (
+        conversation_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        last_seen_seq INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY (conversation_id, profile_id)
+      )
+    `)
+  }
+
+  if (version < 32) {
+    // Secrets migration support (ADR-018 Phase 3c).
+    // encryption_backend tracks which backend encrypted each secret.
+    // secrets_migration_state tracks one-time migration progress.
+    // secrets_backup preserves pre-migration encrypted values for rollback.
+    addMissingColumn('secrets', 'encryption_backend', "TEXT NOT NULL DEFAULT 'electron-safe-storage'")
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS secrets_migration_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        status TEXT NOT NULL DEFAULT 'pending',
+        migration_started_at INTEGER,
+        migration_completed_at INTEGER,
+        rows_migrated INTEGER NOT NULL DEFAULT 0,
+        migration_verified_count INTEGER NOT NULL DEFAULT 0
+      )
+    `)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS secrets_backup (
+        id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL UNIQUE,
+        encrypted_value TEXT NOT NULL,
+        encryption_backend TEXT NOT NULL DEFAULT 'electron-safe-storage',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        migrated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      )
+    `)
   }
 
   setSchemaVersion(SCHEMA_VERSION)

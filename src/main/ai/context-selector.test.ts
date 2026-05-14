@@ -17,6 +17,7 @@ function makePacket(overrides: Partial<AgentContextPacket> = {}): AgentContextPa
     },
     relevantMessages: [],
     projectMemories: [],
+    projectDocs: [],
     recentFileChanges: [],
     agentRoster: [],
     ...overrides
@@ -80,17 +81,53 @@ describe('renderContextPacket', () => {
     expect(output).toContain('src/api/upload.ts [modified] +23 -5')
   })
 
-  it('renders PROJECT MEMORY section', () => {
+  it('renders PROJECT MEMORY section with category grouping', () => {
     const packet = makePacket({
       projectMemories: [
-        { title: 'Component conventions', content: 'Use functional components with hooks' }
+        { title: 'Component conventions', content: 'Use functional components with hooks', category: 'conventions' }
       ]
     })
     const output = renderContextPacket(packet)
 
     expect(output).toContain('[PROJECT MEMORY]')
+    expect(output).toContain('## Conventions')
     expect(output).toContain('### Component conventions')
     expect(output).toContain('Use functional components with hooks')
+  })
+
+  it('renders PROJECT MEMORY with multiple categories in priority order', () => {
+    const packet = makePacket({
+      projectMemories: [
+        { title: 'Tech stack', content: 'Electron + React', category: 'core' },
+        { title: 'IPC pattern', content: 'Use handle not on', category: 'conventions' },
+        { title: 'PATH issue', content: 'PATH missing causes crash', category: 'antipatterns' }
+      ]
+    })
+    const output = renderContextPacket(packet)
+
+    expect(output).toContain('[PROJECT MEMORY]')
+    expect(output).toContain('## Core Facts')
+    expect(output).toContain('## Pitfalls & Lessons')
+    expect(output).toContain('## Conventions')
+
+    // Verify priority order: core before antipatterns before conventions
+    const coreIdx = output.indexOf('## Core Facts')
+    const pitfallIdx = output.indexOf('## Pitfalls & Lessons')
+    const convIdx = output.indexOf('## Conventions')
+    expect(coreIdx).toBeLessThan(pitfallIdx)
+    expect(pitfallIdx).toBeLessThan(convIdx)
+  })
+
+  it('renders memories with unknown category under their raw name', () => {
+    const packet = makePacket({
+      projectMemories: [
+        { title: 'Custom entry', content: 'Some content', category: 'general' }
+      ]
+    })
+    const output = renderContextPacket(packet)
+
+    expect(output).toContain('[PROJECT MEMORY]')
+    expect(output).toContain('### Custom entry')
   })
 
   it('omits TASK PROGRESS when no progress or file changes', () => {
@@ -141,7 +178,7 @@ describe('renderContextPacket', () => {
   it('truncates memory content to 500 chars', () => {
     const longContent = 'y'.repeat(600)
     const packet = makePacket({
-      projectMemories: [{ title: 'Test', content: longContent }]
+      projectMemories: [{ title: 'Test', content: longContent, category: 'core' }]
     })
     const output = renderContextPacket(packet)
 
@@ -154,7 +191,7 @@ describe('renderContextPacket', () => {
       taskState: { goal: 'test', completed: ['did something'], pending: [], decisions: [], blockers: [] },
       recentFileChanges: [makeFileChange()],
       relevantMessages: [{ messageId: '1', agentProfileId: 'p1', content: 'decision made', reason: '关键词匹配' }],
-      projectMemories: [{ title: 'Rule', content: 'Always test' }]
+      projectMemories: [{ title: 'Rule', content: 'Always test', category: 'conventions' }]
     })
     const output = renderContextPacket(packet)
 
@@ -176,7 +213,7 @@ describe('renderContextPacket', () => {
     const packet = makePacket({
       relevantMessages: [],
       projectMemories: [
-        { title: 'Auth patterns', content: 'Use JWT with refresh tokens' }
+        { title: 'Auth patterns', content: 'Use JWT with refresh tokens', category: 'conventions' }
       ],
       taskState: {
         goal: 'Add login page',

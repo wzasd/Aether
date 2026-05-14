@@ -4,10 +4,12 @@ import { EventEmitter } from 'events'
 import { spawn as spawnPty, type IPty } from 'node-pty'
 import { existsSync } from 'fs'
 import type { CLIProvider, SessionConfig, Session, ProviderMeta, ProviderConfig, ModelInfo } from '../provider'
+import type { BridgeConfig } from '../../chat-bridge/types'
 import type { AIEvent } from '../types'
 import type { OutputParser } from './parsers/output-parser'
 import { recordProviderUsage } from '../provider-token-tracker'
 import { writeObservabilityEvent } from '../../core/logging'
+import { diagnoseProviderError } from '../provider-error-diagnostics'
 
 type SessionEntry = {
   session: Session
@@ -39,8 +41,12 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
   protected abstract buildEnv(): Record<string, string>
   protected abstract createParser(transport: 'stream-json' | 'pty', sessionId: string): OutputParser
 
-  /** Override to inject MCP server config args (e.g. --mcp-config-file) */
-  protected buildMcpArgs(_workingDir?: string): string[] {
+  /** Override to inject MCP server config args (e.g. --mcp-config-file).
+   *  When bridgeConfig is present, use the bridge config file path instead
+   *  of generating a separate MCP config. The bridge config already includes
+   *  the "chat" server definition + any existing MCP servers.
+   *  ADR-015: Chat Bridge MCP Sidecar */
+  protected buildMcpArgs(_workingDir?: string, _bridgeConfig?: BridgeConfig): string[] {
     return []
   }
 
@@ -321,7 +327,7 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
   // ─── Transport starters ──────────────────────────────────────
 
   private startStreamJsonSession(session: Session, resumeExistingSession: boolean): Session {
-    const args = [...this.buildStreamJsonArgs(session.config, resumeExistingSession), ...this.buildMcpArgs(session.config.workingDir)]
+    const args = [...this.buildStreamJsonArgs(session.config, resumeExistingSession), ...this.buildMcpArgs(session.config.workingDir, session.config.bridgeConfig)]
     const env = { ...process.env, ...this.resolveEnv() }
     const binary = this.resolveBinary()
 
@@ -405,7 +411,7 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
   }
 
   private startManualSession(session: Session, resumeExistingSession: boolean): Session {
-    const args = [...this.buildManualArgs(session.config, resumeExistingSession), ...this.buildMcpArgs(session.config.workingDir)]
+    const args = [...this.buildManualArgs(session.config, resumeExistingSession), ...this.buildMcpArgs(session.config.workingDir, session.config.bridgeConfig)]
     const env = { ...process.env, ...this.resolveEnv() }
     const binary = this.resolveBinary()
 
@@ -514,19 +520,40 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
   protected emitTerminalFailure(sessionId: string, entry: SessionEntry, message: string): void {
     if (entry.doneEmitted) return
 
+    // PR-1: Run structured error diagnostics before emitting
+    const diagnostic = diagnoseProviderError(message, this.meta.id)
+
     writeObservabilityEvent('runtime:terminated', {
       profileId: this.config?.profileId,
       runtimeKey: this.meta.id,
       sessionId,
       reason: 'crashed',
-      error: message
+      error: diagnostic.scrubbedMessage,
+      errorCategory: diagnostic.category,
+      errorSeverity: diagnostic.severity,
+      errorFingerprint: diagnostic.fingerprint,
+      errorRetryable: diagnostic.retryable,
     })
-    console.error(`[${this.meta.id}] terminal failure:`, message)
+
+    // PR-1: Emit a dedicated provider_error observability event for structured alerting
+    writeObservabilityEvent('provider:error', {
+      profileId: this.config?.profileId,
+      runtimeKey: this.meta.id,
+      sessionId,
+      category: diagnostic.category,
+      severity: diagnostic.severity,
+      fingerprint: diagnostic.fingerprint,
+      scrubbedMessage: diagnostic.scrubbedMessage,
+      retryable: diagnostic.retryable,
+      userAction: diagnostic.userAction,
+    })
+
+    console.error(`[${this.meta.id}] terminal failure (${diagnostic.category}/${diagnostic.severity}):`, diagnostic.scrubbedMessage)
     entry.status = 'error'
     entry.session.status = 'error'
     this.emit(`event:${sessionId}`, {
       type: 'error',
-      error: message
+      error: diagnostic.scrubbedMessage
     } as AIEvent)
     this.emit(`event:${sessionId}`, {
       type: 'done',

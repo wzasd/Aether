@@ -1,9 +1,11 @@
 import type { SessionConfig, ProviderMeta, ModelInfo } from '../provider'
+import type { BridgeConfig } from '../../chat-bridge/types'
 import type { OutputParser } from './parsers/output-parser'
 import { BaseCLIProvider } from './base-cli-provider'
 import { ClaudeOutputParser } from './parsers/claude-output-parser'
 import { Secrets } from '../../core/secrets'
 import { getMcpConfigArgs } from '../../mcp/config-file'
+import { getBridgeConfigPath } from '../../daemon/bridge-config'
 
 const CLAUDE_META: ProviderMeta = {
   id: 'claude',
@@ -119,7 +121,14 @@ export class ClaudeProvider extends BaseCLIProvider {
     return apiKey ? { ANTHROPIC_API_KEY: apiKey } : {}
   }
 
-  protected buildMcpArgs(workingDir?: string): string[] {
+  protected buildMcpArgs(workingDir?: string, bridgeConfig?: BridgeConfig): string[] {
+    // ADR-015: When bridgeConfig is present, use the bridge config file
+    // which already includes the "chat" server definition + existing MCP servers.
+    // Otherwise, fall back to the standard MCP config generation.
+    if (bridgeConfig) {
+      const configPath = getBridgeConfigPath(bridgeConfig.profileId)
+      return ['--mcp-config', configPath]
+    }
     return getMcpConfigArgs(workingDir)
   }
 

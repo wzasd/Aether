@@ -1,4 +1,5 @@
 import type { AIEvent, PermissionMode } from './types'
+import type { BridgeConfig } from '../chat-bridge/types'
 
 // ─── Permission Flags ───
 
@@ -56,6 +57,11 @@ export interface SessionConfig {
   workingDir: string
   sessionId?: string
   appendSystemPrompt?: string
+  /** Bridge sidecar config — set by daemon when chat-bridge MCP sidecar is enabled.
+   *  Contains the MCP config file path that includes the "chat" server definition.
+   *  Provider's buildMcpArgs() injects --mcp-config-file pointing to this config.
+   *  ADR-015: Chat Bridge MCP Sidecar */
+  bridgeConfig?: BridgeConfig
 }
 
 // ─── Session ───

@@ -4,6 +4,7 @@ interface MemoryItem {
   title: string
   content: string
   kind: string
+  category: string | null
 }
 
 export interface InjectionResult {
@@ -56,18 +57,18 @@ export function buildInjectionPrompt(
   const queryText = userMessage.slice(0, 100)
 
   // FTS search: match user message keywords against memory_fts
-  let ftsResults: Array<{ title: string; content: string; kind: string }> = []
+  let ftsResults: Array<{ title: string; content: string; kind: string; category: string | null }> = []
   try {
     ftsResults = db
       .prepare(
-        `SELECT title, content, kind
+        `SELECT title, content, kind, category
          FROM memory_fts
          JOIN project_memory_items ON project_memory_items.rowid = memory_fts.rowid
          WHERE memory_fts MATCH ? AND project_memory_items.workspace_id = ? AND project_memory_items.status = 'active'
          ORDER BY rank
          LIMIT ?`
       )
-      .all(queryText, workspaceId, 5) as Array<{ title: string; content: string; kind: string }>
+      .all(queryText, workspaceId, 5) as Array<{ title: string; content: string; kind: string; category: string | null }>
   } catch {
     // FTS5 syntax error from special characters in user input — fall back to recent-only
   }
@@ -75,7 +76,7 @@ export function buildInjectionPrompt(
   // Always-on: top 3 most recently updated items
   const recentItems = db
     .prepare(
-      `SELECT title, content, kind
+      `SELECT title, content, kind, category
        FROM project_memory_items
        WHERE workspace_id = ? AND status = 'active'
        ORDER BY updated_at DESC LIMIT 3`
@@ -92,7 +93,8 @@ export function buildInjectionPrompt(
   let count = 0
 
   for (const item of combined) {
-    const kindLabel = item.kind ? `[${item.kind}]` : ''
+    const category = (item.category && item.category !== 'general') ? item.category : item.kind
+    const kindLabel = category ? `[${category}]` : ''
     const block = `\n### ${kindLabel} ${item.title}\n${item.content.slice(0, 400)}`
     const blockTokens = estimateTokens(block)
     if (tokens + blockTokens > MAX_TOKENS) break

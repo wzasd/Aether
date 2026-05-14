@@ -288,6 +288,20 @@ declare global {
     publishedAt: string | null
   }
 
+  interface McpServerConfig {
+    name: string
+    command: string
+    args: string[]
+    env: Record<string, string>
+    enabled: boolean
+  }
+
+  interface McpTestResult {
+    ok: boolean
+    tools?: Array<{ name: string; description?: string }>
+    error?: string
+  }
+
   interface ElectronAPI {
     system: {
       getVersion: () => Promise<string>
@@ -469,9 +483,11 @@ declare global {
     }
     memoryPalace: {
       list: (workspaceId: string, category?: string) => Promise<MemoryEntry[]>
-      create: (workspaceId: string, entry: { category: string; title: string; content: string; tags?: string[] }) => Promise<MemoryEntry>
-      update: (id: string, patch: { title?: string; content?: string; category?: string; tags?: string[] }) => Promise<MemoryEntry>
+      create: (workspaceId: string, entry: { category: string; title: string; content: string; tags?: string[]; sourceDoc?: string }) => Promise<MemoryEntry>
+      update: (id: string, patch: { title?: string; content?: string; category?: string; tags?: string[]; sourceDoc?: string }) => Promise<MemoryEntry>
       delete: (id: string) => Promise<void>
+      export: (workspaceId: string, filePath: string) => Promise<{ path: string; count: number }>
+      import: (workspaceId: string, filePath: string) => Promise<{ imported: number; skipped: number; error?: string }>
     }
     terminal: {
       create: (workspaceId: string, cwd?: string) => Promise<string>
@@ -564,6 +580,14 @@ declare global {
 
   interface Window {
     api: ElectronAPI
+    __BYTRO_PORT__?: number
+    __BYTRO_USE_HTTP__?: boolean
+    __BYTRO_USE_HTTP_SYSTEM__?: boolean
+    __BYTRO_USE_HTTP_AUTH__?: boolean
+    __BYTRO_USE_HTTP_CONVERSATIONS__?: boolean
+    __BYTRO_USE_HTTP_MEMORY__?: boolean
+    __BYTRO_USE_HTTP_MEMORY_PALACE__?: boolean
+    __BYTRO_USE_HTTP_MCP__?: boolean
   }
 }
 

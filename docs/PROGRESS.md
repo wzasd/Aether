@@ -1,5 +1,5 @@
 ---
-last_verified: 2026-05-08 12:05
+last_verified: 2026-05-13 09:20
 doc_kind: progress
 ---
 
@@ -15,6 +15,13 @@ doc_kind: progress
 Bytro P0-P3 核心模块已完成。Phase A-J 已收尾。
 
 **Agent Space Phase 1-5 已实现（2026-05-08）。**
+
+**Memory Palace Phase 1 增强已实现（2026-05-13）：**
+- category-aware injection + `[PROJECT DOCS]` 轻量文档索引
+- JSONL export/import
+- `conversation:completed` 自动蒸馏写入 `project_memory_items`
+- `memory_candidates(status=materialized)` 审计链
+- 完整设计文档：[architecture/memory-palace-design.md](architecture/memory-palace-design.md)
 
 **Session Layer Fixes + Observability 已实现（2026-05-08）：**
 - 5 session bugs 全部修复（ADR-005~008 落地）
@@ -57,7 +64,7 @@ Bytro P0-P3 核心模块已完成。Phase A-J 已收尾。
 | Task Execution (Module A) | P0 | ✅ P1 全部修复 | 无 | [→](features/task-execution.md) |
 | File Tracking (Module B) | P1 | ✅ B4/B5 已实现 | 无 | [→](features/file-tracking.md) |
 | Workspace Shell | P0 | ✅ BottomOutput resize 已修复 | 无 | [→](features/workspace-shell.md) |
-| Memory Palace (Module C) | P2 | ✅ Phase 1–6 完成 | C7 cited_by 自动写入（P2） | [→](features/memory-palace.md) |
+| Memory Palace (Module C) | P2 | ✅ Phase 1–6 + Phase 1 增强完成 | C7 cited_by、draft 审批、JSONL git sync、Project Scanner | [→](features/memory-palace.md) |
 | Multi-Agent (Module D) | P3 | ✅ Milestone 2 + Gap Fill 完成 | 无 | [→](features/multi-agent.md) |
 | xterm Terminal (P1) | P1 | ✅ 完成 | 无 | — |
 | Multi-Model Provider | P1 | ✅ Phase A+B 完成 | 无 | [→](features/multi-model.md) |

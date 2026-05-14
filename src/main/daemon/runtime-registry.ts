@@ -10,6 +10,7 @@ import type { AgentProfile, ObservationTool } from '../ai/a2a-types'
 import { bus, type BusEvent } from './event-bus'
 import { taskQueue, type ClaimResult, type EnqueueTaskParams } from './task-queue'
 import type { SessionConfig } from '../ai/provider'
+import { generateBridgeConfig, cleanupBridgeConfig } from './bridge-config'
 import { writeObservabilityEvent } from '../core/logging'
 
 /** A pending message waiting to be enqueued when the agent becomes idle */
@@ -116,6 +117,8 @@ export class RuntimeRegistry {
         } catch (err) {
           console.error('[RuntimeRegistry] stop failed:', resident.profile.name, err)
         }
+        // ADR-015: clean up bridge config files + revoke auth tokens
+        cleanupBridgeConfig(profileId)
       }
     }
     // Clear all idle caches on global stop
@@ -135,6 +138,8 @@ export class RuntimeRegistry {
         this.idleAgentConfigs.delete(key)
       }
     }
+    // ADR-015: clean up bridge config files + revoke auth tokens
+    cleanupBridgeConfig(profileId)
     console.info('[RuntimeRegistry] suspended:', resident.profile.name)
     return true
   }
@@ -236,10 +241,29 @@ export class RuntimeRegistry {
           ? (cached!.sessionId ?? task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId, providerType))
           : (task.sessionId ?? taskQueue.getLastSessionId(task.conversationId, profileId, providerType))
 
+        // ADR-015: Generate bridge config for chat-bridge MCP sidecar.
+        // Daemon issues auth token + writes MCP config file; provider's
+        // buildMcpArgs() injects --mcp-config-file pointing to it.
+        let bridgeConfig
+        try {
+          bridgeConfig = generateBridgeConfig(
+            profileId,
+            task.conversationId,
+            this.config.workingDir
+          )
+        } catch (bridgeErr) {
+          // Bridge config generation failed — log and continue without bridge
+          // (agent can still function without chat-bridge MCP tools)
+          console.warn(
+            '[RuntimeRegistry] bridge config generation failed for', resident.profile.name,
+            ':', bridgeErr instanceof Error ? bridgeErr.message : bridgeErr
+          )
+        }
+
         try {
           const resumeConfig = lastSessionId
-            ? { ...this.config, sessionId: lastSessionId }
-            : this.config
+            ? { ...this.config, sessionId: lastSessionId, bridgeConfig }
+            : { ...this.config, bridgeConfig }
           await resident.runtime.start(resumeConfig)
         } catch (resumeErr) {
           // Session resume failed — fallback to a fresh session (Slock: resume_or_fresh)
@@ -247,7 +271,7 @@ export class RuntimeRegistry {
             '[RuntimeRegistry] session resume failed for', resident.profile.name,
             ', falling back to fresh session:', resumeErr
           )
-          await resident.runtime.start(this.config)
+          await resident.runtime.start({ ...this.config, bridgeConfig })
         }
       }
 

@@ -290,12 +290,16 @@ const api = {
   memoryPalace: {
     list: (workspaceId: string, category?: string) =>
       ipcRenderer.invoke('memory-palace:list', workspaceId, category),
-    create: (workspaceId: string, entry: { category: string; title: string; content: string; tags?: string[] }) =>
+    create: (workspaceId: string, entry: { category: string; title: string; content: string; tags?: string[]; sourceDoc?: string }) =>
       ipcRenderer.invoke('memory-palace:create', workspaceId, entry),
-    update: (id: string, patch: { title?: string; content?: string; category?: string; tags?: string[] }) =>
+    update: (id: string, patch: { title?: string; content?: string; category?: string; tags?: string[]; sourceDoc?: string }) =>
       ipcRenderer.invoke('memory-palace:update', id, patch),
     delete: (id: string) =>
-      ipcRenderer.invoke('memory-palace:delete', id)
+      ipcRenderer.invoke('memory-palace:delete', id),
+    export: (workspaceId: string, filePath: string) =>
+      ipcRenderer.invoke('memory-palace:export', workspaceId, filePath),
+    import: (workspaceId: string, filePath: string) =>
+      ipcRenderer.invoke('memory-palace:import', workspaceId, filePath)
   },
   team: {
     list: (): Promise<Array<{ id: string; name: string; description: string; pipeline: Array<{ profileId: string; role?: string; trigger?: string; feedbackTo?: string | null }>; members?: Array<{ profileId: string; providerOverride?: string; modelOverride?: string }>; policies?: Record<string, unknown> }>> =>

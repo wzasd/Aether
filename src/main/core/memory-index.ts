@@ -55,17 +55,28 @@ export function createProjectMemoryItem(data: {
   id: string
   workspace_id: string
   kind: string
+  category?: string
   title: string
   content: string
   status: string
   source_path?: string
   source_hash?: string
+  source_doc?: string
+  tags?: string[]
 }): void {
   const db = getDb()
+  const category = data.category ?? data.kind
+  const tags = JSON.stringify(data.tags ?? [])
+  const sourceDoc = data.source_doc ?? null
   db.prepare(`
-    INSERT INTO project_memory_items (id, workspace_id, kind, title, content, status, source_path, source_hash)
-    VALUES (@id, @workspace_id, @kind, @title, @content, @status, @source_path, @source_hash)
-  `).run(data)
+    INSERT INTO project_memory_items (id, workspace_id, kind, category, title, content, status, source_path, source_hash, tags, source_doc)
+    VALUES (@id, @workspace_id, @kind, @category, @title, @content, @status, @source_path, @source_hash, @tags, @source_doc)
+  `).run({
+    ...data,
+    category,
+    tags,
+    source_doc: sourceDoc
+  })
 }
 
 export function materializeCandidateToProjectMemory(candidateId: string, projectItemId: string): any | undefined {

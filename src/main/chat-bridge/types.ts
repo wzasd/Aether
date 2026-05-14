@@ -158,8 +158,6 @@ export interface BridgeConfig {
   conversationId: string
   /** Working directory */
   workingDir: string
-  /** DB path for direct reads (optional, if HTTP disabled) */
-  dbPath?: string
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────

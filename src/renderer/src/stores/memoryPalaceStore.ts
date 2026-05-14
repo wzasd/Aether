@@ -10,6 +10,7 @@ export interface MemoryEntry {
   content: string
   tags: string[]
   citedBy: string[]
+  sourceDoc?: string
   createdAt: number
   updatedAt: number
 }
@@ -40,6 +41,8 @@ interface MemoryPalaceState {
   createItem: (workspaceId: string, data: NewEntryData) => Promise<void>
   updateItem: (id: string, patch: PatchData) => Promise<void>
   deleteItem: (id: string) => Promise<void>
+  exportItems: (workspaceId: string, filePath: string) => Promise<{ path: string; count: number }>
+  importItems: (workspaceId: string, filePath: string) => Promise<{ imported: number; skipped: number }>
   setFilter: (category: MemoryCategory | 'all') => void
   selectEntry: (id: string | null) => void
   startEditing: () => void
@@ -86,6 +89,18 @@ export const useMemoryPalaceStore = create<MemoryPalaceState>((set, get) => ({
       const selectedId = state.selectedId === id ? (items[0]?.id ?? null) : state.selectedId
       return { items, selectedId, isEditing: false, editDraft: {} }
     })
+  },
+
+  exportItems: async (workspaceId, filePath) => {
+    const result = await window.api.memoryPalace.export(workspaceId, filePath) as { path: string; count: number }
+    return result
+  },
+
+  importItems: async (workspaceId, filePath) => {
+    const result = await window.api.memoryPalace.import(workspaceId, filePath) as { imported: number; skipped: number }
+    // Reload items after import
+    await get().loadItems(workspaceId)
+    return result
   },
 
   setFilter: (category) => set({ filterCategory: category }),

@@ -31,45 +31,45 @@ import {
   TOOL_DESCRIPTIONS,
 } from './types'
 
-// ─── Zod Schemas ────────────────────────────────────────────────────────────
+// ─── Zod Schemas (runtime values for MCP JSON Schema generation) ─────────────
 
-export const SendMessageSchema = z.object({
-  target: z.string().describe('Target channel or thread reference'),
+export const sendMessageSchema = z.object({
+  target: z.string().describe('Target channel or thread reference. Format: conv:<conversationId> or conv:<conversationId>:<messageId>'),
   content: z.string().describe('Message content (markdown supported)'),
   threadRef: z.string().optional().describe('Optional thread reference'),
 })
 
-export const CheckMessagesSchema = z.object({
-  channel: z.string().optional().describe('Optional channel to check'),
+export const checkMessagesSchema = z.object({
+  channel: z.string().optional().describe('Optional channel to check. If omitted, check all subscribed channels'),
 })
 
-export const ReadHistorySchema = z.object({
-  channel: z.string().describe('Channel reference'),
-  limit: z.number().int().min(1).max(MAX_HISTORY_LIMIT).optional().describe('Number of messages'),
-  before: z.number().int().optional().describe('Pagination: seq number'),
+export const readHistorySchema = z.object({
+  channel: z.string().describe('Channel reference. Format: conv:<conversationId>'),
+  limit: z.number().int().min(1).max(MAX_HISTORY_LIMIT).optional().describe('Number of messages (default 50, max 100)'),
+  before: z.number().int().optional().describe('Pagination: return messages before this seq number'),
 })
 
-export const SearchMessagesSchema = z.object({
-  query: z.string().describe('Search query (FTS5 syntax)'),
+export const searchMessagesSchema = z.object({
+  query: z.string().describe('Search query (FTS5 syntax supported)'),
   channel: z.string().optional().describe('Optional channel scope'),
-  limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
+  limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional().describe('Max results (default 10, max 20)'),
 })
 
-export const ClaimTaskSchema = z.object({
+export const claimTaskSchema = z.object({
   channel: z.string().describe('Channel reference'),
   taskNumber: z.number().int().positive().describe('Task number from list_tasks'),
 })
 
-export const UpdateTaskStatusSchema = z.object({
+export const updateTaskStatusSchema = z.object({
   channel: z.string().describe('Channel reference'),
   taskNumber: z.number().int().positive().describe('Task number'),
   status: z.enum(['in_progress', 'in_review', 'done', 'closed']).describe('New status'),
   result: z.string().optional().describe('Optional result summary'),
 })
 
-export const ListChannelsSchema = z.object({})
+export const listChannelsSchema = z.object({})
 
-export const UploadAttachmentSchema = z.object({
+export const uploadAttachmentSchema = z.object({
   filePath: z.string().describe('Absolute file path'),
   channel: z.string().optional().describe('Optional channel association'),
 })
@@ -168,19 +168,19 @@ export function formatUploadAttachmentResult(result: UploadAttachmentOutput): st
 export const toolDescriptions = {
   send_message: {
     description: TOOL_DESCRIPTIONS.send_message,
-    schema: SendMessageSchema,
+    schema: sendMessageSchema,
   },
   check_messages: {
     description: TOOL_DESCRIPTIONS.check_messages,
-    schema: CheckMessagesSchema,
+    schema: checkMessagesSchema,
   },
   read_history: {
     description: TOOL_DESCRIPTIONS.read_history,
-    schema: ReadHistorySchema,
+    schema: readHistorySchema,
   },
   search_messages: {
     description: TOOL_DESCRIPTIONS.search_messages,
-    schema: SearchMessagesSchema,
+    schema: searchMessagesSchema,
   },
   list_tasks: {
     description: '列出当前 channel 的所有待办任务。',
@@ -188,18 +188,18 @@ export const toolDescriptions = {
   },
   claim_task: {
     description: '认领 channel 里的一个待办任务。',
-    schema: ClaimTaskSchema,
+    schema: claimTaskSchema,
   },
   update_task_status: {
     description: '更新已认领任务的状态。',
-    schema: UpdateTaskStatusSchema,
+    schema: updateTaskStatusSchema,
   },
   list_channels: {
     description: '列出当前 agent 参与的所有活跃 channel（conversation）。',
-    schema: ListChannelsSchema,
+    schema: listChannelsSchema,
   },
   upload_attachment: {
     description: TOOL_DESCRIPTIONS.upload_attachment,
-    schema: UploadAttachmentSchema,
+    schema: uploadAttachmentSchema,
   },
 } as const

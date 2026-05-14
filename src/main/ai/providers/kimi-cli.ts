@@ -4,10 +4,12 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { homedir } from 'os'
 import type { SessionConfig, Session, ProviderMeta, ModelInfo } from '../provider'
+import type { BridgeConfig } from '../../chat-bridge/types'
 import type { OutputParser } from './parsers/output-parser'
 import { BaseCLIProvider } from './base-cli-provider'
 import { KimiOutputParser } from './parsers/kimi-output-parser'
 import { getMcpConfigArgs } from '../../mcp/config-file'
+import { getBridgeConfigPath } from '../../daemon/bridge-config'
 import { writeObservabilityEvent } from '../../core/logging'
 
 const KIMI_META: ProviderMeta = {
@@ -67,7 +69,11 @@ export class KimiProvider extends BaseCLIProvider {
     return { FORCE_COLOR: '0', NO_COLOR: '1' }
   }
 
-  protected buildMcpArgs(workingDir?: string): string[] {
+  protected buildMcpArgs(workingDir?: string, bridgeConfig?: BridgeConfig): string[] {
+    if (bridgeConfig) {
+      const configPath = getBridgeConfigPath(bridgeConfig.profileId)
+      return ['--mcp-config-file', configPath]
+    }
     return getMcpConfigArgs(workingDir, '--mcp-config-file')
   }
 
@@ -192,7 +198,7 @@ export class KimiProvider extends BaseCLIProvider {
       args.push('--session', entry.config.sessionId)
     }
 
-    const mcpArgs = this.buildMcpArgs(entry.config.workingDir)
+    const mcpArgs = this.buildMcpArgs(entry.config.workingDir, entry.config.bridgeConfig)
     args.push(...mcpArgs)
 
     // Prompt goes as --prompt flag (Kimi --print mode expects this, not stdin)

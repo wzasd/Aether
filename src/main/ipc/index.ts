@@ -1,3 +1,15 @@
+/**
+ * IPC Handler Registration — DEPRECATED
+ *
+ * All IPC handlers below have been migrated to HTTP endpoints in
+ * `src/main/daemon/renderer-api-routes/`. This file is kept during
+ * Phase 3f (renderer-side HTTP migration) and will be removed once
+ * the renderer no longer depends on ipcRenderer.invoke().
+ *
+ * ADR-016: Renderer API Server + SSE
+ * Phase 3d status: 100% complete (136/136 handlers migrated)
+ */
+
 import { registerSystemIpc } from './system'
 import { registerWorkspaceIpc } from './workspace'
 import { registerConversationIpc } from './conversation'
@@ -16,7 +28,9 @@ import { registerMcpIpc } from './mcp'
 import { registerTeamIpc } from './team'
 import { registerLogsIpc } from './logs'
 import { registerDaemonIpc } from './daemon'
+import { registerActionCardIpc } from './action-card'
 
+/** @deprecated IPC handlers superseded by HTTP endpoints. Kept for Phase 3f renderer migration. */
 export function registerIpcHandlers(): void {
   registerSystemIpc()
   registerWorkspaceIpc()
@@ -36,4 +50,5 @@ export function registerIpcHandlers(): void {
   registerTeamIpc()
   registerLogsIpc()
   registerDaemonIpc()
+  registerActionCardIpc()
 }

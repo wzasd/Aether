@@ -1,12 +1,13 @@
 ---
 status: active
 owner: bytro
-last_verified: 2026-05-07
+last_verified: 2026-05-13
 doc_kind: architecture
 applies_to:
   - src/main/ai/a2a-memory-distiller.ts
   - src/main/ai/memory-extractor.ts
   - src/main/ai/orchestrator.ts
+  - src/main/daemon/daemon.ts
   - src/main/core/memory-index.ts
 ---
 
@@ -32,6 +33,25 @@ These patterns are invisible to per-message extraction because they require seei
 
 ### Trigger Condition
 
+There are two trigger paths during the architecture transition:
+
+1. **Daemon path (current)**: `Daemon` publishes `conversation:completed` when a tracked conversation has no pending/claimed/running tasks, then runs `distillChain()` and `persistToMemoryPalace()`.
+2. **Legacy orchestrator path**: `orchestrator.drainSerialQueue()` triggers distillation when the root continuity capsule is completed and no tasks are active.
+
+Current daemon trigger:
+
+```typescript
+bus.publish({
+  type: 'conversation:completed',
+  conversationId,
+  actorType: 'system',
+  actorId: null,
+  payload: { reason: 'all_tasks_complete', taskCount, participantIds }
+})
+```
+
+Legacy trigger:
+
 ```typescript
 // In orchestrator.drainSerialQueue()
 const rootCapsule = capsuleManager.getRootCapsule(conversationId)
@@ -41,7 +61,7 @@ if (rootCapsule?.ballState === 'completed' && activeTasks.length === 0) {
 }
 ```
 
-Trigger fires when:
+Legacy trigger fires when:
 1. The root task (depth=0, user-initiated) is completed
 2. No tasks are still pending or working
 3. This happens at the end of serial queue draining
@@ -58,15 +78,21 @@ interface ChainMemoryDistillate {
     agentsInvolved: string[]
     decision: string
     rationale: string
+    suggestedCategory: 'decisions'
+    confidence: number
   }>
   conventions: Array<{
     pattern: string
     appliesTo: string[]
+    suggestedCategory: 'conventions'
+    confidence: number
   }>
   failures: Array<{
     agent: string
     issue: string
     remediation: string
+    suggestedCategory: 'antipatterns'
+    confidence: number
   }>
 }
 ```
@@ -87,15 +113,16 @@ Current implementation uses **lightweight regex patterns** on concatenated assis
 
 ## Persistence
 
-Chain-level distillates are written to Memory Palace as `memory_candidates` with three kinds:
+Chain-level distillates are written directly to Memory Palace (`project_memory_items`) and mirrored to `memory_candidates(status=materialized)` as an audit trail.
 
-| kind | title example | confidence |
-|------|--------------|------------|
-| `a2a_chain_summary` | "A2A 协作链: Planner → Coder → Reviewer" | 0.7 |
-| `a2a_convention` | "协作惯例: 先写测试再实现" | 0.6 |
-| `a2a_lesson` | "教训: Coder - 忘记错误处理" | 0.8 |
+| Distillate | Memory category | default status | confidence |
+|---|---|---|---|
+| chain summary | `architecture` | `draft` | 0.7 |
+| decision point | `decisions` | `draft` | 0.65 |
+| convention | `conventions` | `draft` | 0.6 |
+| failure lesson | `antipatterns` | `active` | 0.75-0.8 |
 
-These enter the same review pipeline as per-message candidates: status `captured` → user review → `accepted`/`rejected`.
+Default status follows `DEFAULT_STATUS_BY_CATEGORY` in `context-selector.ts`. `core/antipatterns` become active automatically; `conventions/decisions/architecture` remain draft until reviewed.
 
 ---
 
@@ -107,7 +134,7 @@ These enter the same review pipeline as per-message candidates: status `captured
 | Source | One assistant message | All assistant messages + task graph |
 | Scope | Agent-local decision | Cross-agent convention |
 | Depth | Surface keywords | Interaction patterns |
-| Kinds | decision, antipattern, convention | a2a_chain_summary, a2a_convention, a2a_lesson |
+| Categories | decisions, antipatterns, conventions | architecture, decisions, conventions, antipatterns |
 
 ---
 
@@ -124,5 +151,7 @@ These enter the same review pipeline as per-message candidates: status `captured
 
 - `src/main/ai/a2a-memory-distiller.ts` — distillation engine
 - `src/main/ai/memory-extractor.ts` — per-message extraction (complementary)
-- `src/main/ai/orchestrator.ts` — trigger in `drainSerialQueue()`
-- `src/main/core/memory-index.ts` — `createCandidate()` persistence
+- `src/main/daemon/daemon.ts` — `conversation:completed` trigger and observability
+- `src/main/ai/orchestrator.ts` — legacy trigger in `drainSerialQueue()`
+- `src/main/core/memory-index.ts` — `createProjectMemoryItem()` and `createCandidate()` persistence
+- `docs/architecture/memory-palace-design.md` — full Memory Palace architecture

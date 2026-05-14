@@ -20,7 +20,7 @@ describe('extractCandidates', () => {
     const result = extractCandidates(
       makeInput('经过分析，决定：使用 React Query 管理服务端状态。同时选择：Vite 作为构建工具。')
     )
-    const decisions = result.filter((c) => c.kind === 'decision')
+    const decisions = result.filter((c) => c.kind === 'decisions')
     expect(decisions.length).toBeGreaterThanOrEqual(1)
     expect(decisions[0].content).toContain('React Query')
     expect(decisions[0].confidence).toBe('low')
@@ -30,7 +30,7 @@ describe('extractCandidates', () => {
     const result = extractCandidates(
       makeInput('注意：不要在渲染过程中直接修改 state。避免：在 useEffect 中做同步操作。')
     )
-    const antipatterns = result.filter((c) => c.kind === 'antipattern')
+    const antipatterns = result.filter((c) => c.kind === 'antipatterns')
     expect(antipatterns.length).toBeGreaterThanOrEqual(1)
     expect(antipatterns[0].content).toContain('不要')
   })
@@ -39,7 +39,7 @@ describe('extractCandidates', () => {
     const result = extractCandidates(
       makeInput('约定：所有组件放在 src/components 下。规范：使用 kebab-case 命名文件。')
     )
-    const conventions = result.filter((c) => c.kind === 'convention')
+    const conventions = result.filter((c) => c.kind === 'conventions')
     expect(conventions.length).toBeGreaterThanOrEqual(1)
     expect(conventions[0].content).toContain('组件')
   })
@@ -55,7 +55,7 @@ describe('extractCandidates', () => {
     const result = extractCandidates(
       makeInput('决定：使用 TypeScript。\n决定：使用 TypeScript。')
     )
-    const decisions = result.filter((c) => c.kind === 'decision')
+    const decisions = result.filter((c) => c.kind === 'decisions')
     // Only one unique decision about TypeScript
     expect(decisions.length).toBe(1)
   })
@@ -74,8 +74,8 @@ describe('extractCandidates', () => {
     const result = extractCandidates(makeInput(text))
     const kinds = result.map((c) => c.kind)
     // Should have at least one of each kind
-    expect(kinds).toContain('decision')
-    expect(kinds).toContain('convention')
+    expect(kinds).toContain('decisions')
+    expect(kinds).toContain('conventions')
   })
 
   it('respects title length limit', () => {

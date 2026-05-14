@@ -19,9 +19,32 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
+import { zodToJsonSchema } from 'zod-to-json-schema'
 import { writeObservabilityEvent } from '../core/logging'
-import { toolDescriptions } from './tools'
-import { MCP_SERVER_NAME } from './types'
+import {
+  toolDescriptions,
+  formatSendMessageResult,
+  formatCheckMessagesResult,
+  formatReadHistoryResult,
+  formatSearchMessagesResult,
+  formatListChannelsResult,
+  formatListTasksResult,
+  formatClaimTaskResult,
+  formatUpdateTaskStatusResult,
+  formatUploadAttachmentResult,
+} from './tools'
+import {
+  MCP_SERVER_NAME,
+  type SendMessageOutput,
+  type CheckMessagesOutput,
+  type ReadHistoryOutput,
+  type SearchMessagesOutput,
+  type ListChannelsOutput,
+  type ListTasksOutput,
+  type ClaimTaskOutput,
+  type UpdateTaskStatusOutput,
+  type UploadAttachmentOutput,
+} from './types'
 
 // ─── CLI Args ───────────────────────────────────────────────────────────────
 
@@ -65,7 +88,7 @@ class BridgeApiClient {
     this.authToken = authToken
   }
 
-  private async request<T>(path: string, options?: RequestInit): Promise<T> {
+  private async requestJson<T>(path: string, options?: RequestInit): Promise<T> {
     const url = `${this.baseUrl}${path}`
     const response = await fetch(url, {
       ...options,
@@ -84,8 +107,26 @@ class BridgeApiClient {
     return response.json() as Promise<T>
   }
 
+  private async requestText(path: string, options?: RequestInit): Promise<string> {
+    const url = `${this.baseUrl}${path}`
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Authorization': `Bearer ${this.authToken}`,
+        ...options?.headers,
+      },
+    })
+
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`Bridge API error ${response.status}: ${text}`)
+    }
+
+    return response.text()
+  }
+
   async sendMessage(body: unknown) {
-    return this.request('/message/send', {
+    return this.requestJson('/message/send', {
       method: 'POST',
       body: JSON.stringify(body),
     })
@@ -93,44 +134,44 @@ class BridgeApiClient {
 
   async checkMessages(params?: Record<string, string>) {
     const query = params ? '?' + new URLSearchParams(params).toString() : ''
-    return this.request(`/message/check${query}`)
+    return this.requestText(`/message/check${query}`)
   }
 
   async readHistory(params: Record<string, string>) {
     const query = '?' + new URLSearchParams(params).toString()
-    return this.request(`/message/read${query}`)
+    return this.requestText(`/message/read${query}`)
   }
 
   async searchMessages(params: Record<string, string>) {
     const query = '?' + new URLSearchParams(params).toString()
-    return this.request(`/message/search${query}`)
+    return this.requestText(`/message/search${query}`)
   }
 
   async listTasks(params: Record<string, string>) {
     const query = '?' + new URLSearchParams(params).toString()
-    return this.request(`/task/list${query}`)
+    return this.requestText(`/task/list${query}`)
   }
 
   async claimTask(body: unknown) {
-    return this.request('/task/claim', {
+    return this.requestJson('/task/claim', {
       method: 'POST',
       body: JSON.stringify(body),
     })
   }
 
   async updateTaskStatus(body: unknown) {
-    return this.request('/task/update', {
+    return this.requestJson('/task/update', {
       method: 'POST',
       body: JSON.stringify(body),
     })
   }
 
   async listChannels() {
-    return this.request('/channel/list')
+    return this.requestText('/channel/list')
   }
 
   async uploadAttachment(body: unknown) {
-    return this.request('/attachment/upload', {
+    return this.requestJson('/attachment/upload', {
       method: 'POST',
       body: JSON.stringify(body),
     })
@@ -140,25 +181,25 @@ class BridgeApiClient {
 // ─── Message Cache ──────────────────────────────────────────────────────────
 
 class MessageCache {
-  private cache = new Map<number, boolean>()
+  private cache = new Map<string, boolean>()
   private maxSize: number
 
   constructor(maxSize = 1000) {
     this.maxSize = maxSize
   }
 
-  has(seq: number): boolean {
-    return this.cache.has(seq)
+  has(seq: number, msgId: string): boolean {
+    return this.cache.has(`${seq}:${msgId}`)
   }
 
-  add(seq: number): void {
+  add(seq: number, msgId: string): void {
     if (this.cache.size >= this.maxSize) {
       const firstKey = this.cache.keys().next().value
       if (firstKey !== undefined) {
         this.cache.delete(firstKey)
       }
     }
-    this.cache.set(seq, true)
+    this.cache.set(`${seq}:${msgId}`, true)
   }
 }
 
@@ -178,7 +219,7 @@ async function main() {
 
   const server = new Server(
     {
-      name: 'bytro-chat-bridge',
+      name: MCP_SERVER_NAME,
       version: '0.1.0',
     },
     {
@@ -275,21 +316,35 @@ async function main() {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
-  // Minimal Zod-to-JSON-Schema converter for MCP registration
-  // In production, use zod-to-json-schema package
-  const description = schema._def.description || ''
-  return {
-    type: 'object',
-    description,
-    properties: {},
-    required: [],
-  }
-}
+
 
 function formatResult(toolName: string, result: unknown): string {
-  // In production, use the formatters from tools.ts
-  return typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+  // ADR-015: All MCP tool responses must be human-readable prose, not JSON.
+  // GET endpoints (check_messages, read_history, search_messages, list_channels)
+  // already return text/plain from Bridge API — pass through directly.
+  // POST endpoints (send_message, claim_task, update_task_status) return JSON
+  // — apply prose formatter from tools.ts.
+  switch (toolName) {
+    case 'send_message':
+      return formatSendMessageResult(result as SendMessageOutput)
+    case 'check_messages':
+    case 'read_history':
+    case 'search_messages':
+    case 'list_channels':
+      // Bridge API returns text/plain — result is already prose
+      return typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+    case 'list_tasks':
+      // list_tasks returns text/plain from Bridge API
+      return typeof result === 'string' ? result : formatListTasksResult(result as ListTasksOutput)
+    case 'claim_task':
+      return formatClaimTaskResult(result as ClaimTaskOutput)
+    case 'update_task_status':
+      return formatUpdateTaskStatusResult(result as UpdateTaskStatusOutput)
+    case 'upload_attachment':
+      return formatUploadAttachmentResult(result as UploadAttachmentOutput)
+    default:
+      return typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+  }
 }
 
 // ─── Entry ────────────────────────────────────────────────────────────────────

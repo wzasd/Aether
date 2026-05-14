@@ -96,9 +96,9 @@ export function extractCandidates(input: MemoryCandidateInput): ExtractedCandida
     return []
   }
 
-  const decisions = extractByPatterns(input.fullText, DECISION_PATTERNS, 'decision')
-  const antipatterns = extractByPatterns(input.fullText, ANTIPATTERN_PATTERNS, 'antipattern')
-  const conventions = extractByPatterns(input.fullText, CONVENTION_PATTERNS, 'convention')
+  const decisions = extractByPatterns(input.fullText, DECISION_PATTERNS, 'decisions')
+  const antipatterns = extractByPatterns(input.fullText, ANTIPATTERN_PATTERNS, 'antipatterns')
+  const conventions = extractByPatterns(input.fullText, CONVENTION_PATTERNS, 'conventions')
 
   return [...decisions, ...antipatterns, ...conventions].slice(0, MAX_CANDIDATES)
 }

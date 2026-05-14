@@ -26,7 +26,7 @@ This directory is the record system for Bytro. Agents should start here, then re
 | Session-Context-Memory refactoring | `architecture/bytro-refactoring-plan.md` | `architecture/decisions/session-layer-adrs.md`, `architecture/memory-system.md`, `architecture/multi-agent-a2a-orchestration.md` |
 | Open Floor / dual-mode collaboration | `features/open-floor-collaboration-mode.md` | `architecture/bytro-refactoring-plan.md` Phase 4, `architecture/decisions/session-layer-adrs.md` ADR-009/010 |
 | Permission model / approval architecture | `architecture/decisions/session-layer-adrs.md` ADR-010 | `architecture/observability-logging.md`, `architecture/bytro-refactoring-plan.md` Phase 4 |
-| Memory / recall / agent sessions | `architecture/memory-system.md` | `specs/2026-04-29-bytro-memory-system-design.md` |
+| Memory Palace / recall / agent sessions | `architecture/memory-palace-design.md` | `architecture/memory-system.md`, `architecture/a2a-memory-bridge.md`, `features/memory-palace.md` |
 | Functional requirements (active) | `specs/2026-04-30-functional-requirements.md` | module design docs in `design/modules/` |
 | Design spec reference | `design/mochi-design-reference.md` | `reviews/active/design-spec-gap-analysis.md` |
 | Module A: Task = Conversation | `design/modules/A-task-execution-engine.md` | `specs/2026-04-30-functional-requirements.md` |
@@ -59,6 +59,7 @@ This directory is the record system for Bytro. Agents should start here, then re
 - `architecture/session-bug-fixes.md` — 2026-05-08 session bug fixes summary: 6 bugs fixed (zombie defense, permission routing, runtime key collision, stale session resume, feedback context, mention parser), ADR decisions, verification results, lessons learned.
 - `architecture/observability-logging.md` — JSONL structured logging for agent runtime lifecycle covering 11 event types (task/runtime/permission/feedback/intent), IPC API (`logs:list`/`logs:read`), troubleshooting guide for "agent doesn't reply" and "permission stuck" scenarios.
 - `architecture/bytro-refactoring-plan.md` — **会话-上下文-记忆三模块联动重构计划**：现状评估、目标架构、模块映射、P0-P4 实施路线图（含 Phase 4 混合协作拓扑）。
+- `architecture/memory-palace-design.md` — **Memory Palace 完整架构设计**：分类、不记忆清单、三层知识架构、自动蒸馏、JSONL/git 同步、新项目冷启动。
 - `architecture/memory-system.md` — durable memory layers and read-model boundaries.
 - `architecture/ai-native-workspace.md` — task-first workspace architecture derived from the Figma Make prototype.
 - `architecture/workspace-surfaces-technology.md` — technology choices for Code Editor, Terminal/Output, and Preview.
