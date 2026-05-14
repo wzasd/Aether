@@ -159,6 +159,7 @@ describe('Daemon (Electron adapter)', () => {
 
   beforeEach(() => {
     daemon = new Daemon({ pollIntervalMs: 50 })
+    daemon.init() // Must call init() after construction — creates DaemonCore
     mockObservations.clear()
     bus.clear()
     vi.clearAllMocks()

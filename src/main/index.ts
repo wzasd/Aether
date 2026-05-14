@@ -5,6 +5,7 @@ import { createLogger, installConsoleLogBridge } from './core/logging'
 import { registerIpcHandlers } from './ipc'
 import { safeOpenExternal } from './utils/external'
 import { checkForUpdatesSilent } from './ipc/update'
+import { daemon } from './daemon/daemon'
 
 let mainWindow: BrowserWindow | null = null
 const logger = createLogger('app')
@@ -57,6 +58,7 @@ app.whenReady().then(() => {
 
   try {
     initDatabase()
+    daemon.init()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('Failed to initialize database:', err)

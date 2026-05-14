@@ -53,11 +53,17 @@ export class Daemon {
   private processManager: DaemonProcessManager | null = null
   private webContents: WebContents | null = null
   private mode: DaemonMode
+  private secrets: SecretsBackend | null = null
 
   constructor(config: Partial<DaemonConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config }
     this.mode = this.config.mode
+    // Initialization is deferred to init() — must run after initDatabase()
+    // because initInProcessMode() calls getDb() which requires DB to be ready.
+  }
 
+  /** Initialize daemon internals (must be called after initDatabase()) */
+  init(): void {
     if (this.mode === 'in-process') {
       this.initInProcessMode()
     }
@@ -143,38 +149,14 @@ export class Daemon {
 
   private initInProcessMode(): void {
     const paths = createElectronAppPaths()
-    let secrets = createSecretsBackend({
+    this.secrets = createSecretsBackend({
       preferElectronSafeStorage: true,
       dataDir: paths.dataDir,
     })
 
-    // ADR-018 Phase 3c: Migrate secrets from safeStorage → KeyFile
-    // Only runs in Electron (in-process) mode — safeStorage.decryptString() requires Electron.
-    if (secrets.backendName === 'electron-safeStorage') {
-      const keyFileBackend = new KeyFileSecretsBackend(paths.dataDir)
-      const db = getDb()
-      const result = migrateSecrets(db, secrets, keyFileBackend)
-
-      if (result.success) {
-        console.info('[Daemon] Secrets migration completed:', result.rowsMigrated, 'rows migrated')
-        // Switch to key-file backend after successful migration
-        secrets = keyFileBackend
-      } else {
-        console.error('[Daemon] Secrets migration failed:', result.rowsFailed, 'rows failed')
-        // Continue with electron-safe-storage — migration will retry on next startup
-      }
-    } else {
-      // Already using key-file — increment verified count for backup cleanup
-      const db = getDb()
-      incrementMigrationVerifiedCount(db)
-    }
-
-    // Initialize the SecretsStore singleton for legacy callers
-    initSecretsStore(secrets)
-
     const coreConfig: DaemonCoreConfig = {
       paths,
-      secrets,
+      secrets: this.secrets,
       rendererPort: DEFAULT_RENDERER_PORT,
       headless: false,
       maxConcurrentTasks: this.config.maxConcurrentTasks,
@@ -187,6 +169,33 @@ export class Daemon {
 
   private async startInProcess(): Promise<void> {
     sseBroadcaster.setWebContents(this.webContents)
+
+    // ADR-018 Phase 3c: Migrate secrets from safeStorage → KeyFile
+    // Must run after initDatabase() — getDb() requires DB to be initialized.
+    const paths = createElectronAppPaths()
+
+    if (this.secrets!.backendName === 'electron-safeStorage') {
+      const keyFileBackend = new KeyFileSecretsBackend(paths.dataDir)
+      const db = getDb()
+      const result = migrateSecrets(db, this.secrets!, keyFileBackend)
+
+      if (result.success) {
+        console.info('[Daemon] Secrets migration completed:', result.rowsMigrated, 'rows migrated')
+        // Switch to key-file backend after successful migration
+        this.secrets = keyFileBackend
+      } else {
+        console.error('[Daemon] Secrets migration failed:', result.rowsFailed, 'rows failed')
+        // Continue with electron-safe-storage — migration will retry on next startup
+      }
+    } else {
+      // Already using key-file — increment verified count for backup cleanup
+      const db = getDb()
+      incrementMigrationVerifiedCount(db)
+    }
+
+    // Initialize the SecretsStore singleton for legacy callers
+    initSecretsStore(this.secrets!)
+
     await this.core!.start()
   }
 
