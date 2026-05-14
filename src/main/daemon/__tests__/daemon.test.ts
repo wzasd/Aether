@@ -411,15 +411,16 @@ describe('Daemon (Electron adapter)', () => {
   })
 })
 
-describe('Daemon constructor wiring', () => {
-  it('creates DaemonCore with Electron-specific config', async () => {
-    // Create a fresh Daemon instance — constructor calls createElectronAppPaths + createSecretsBackend
+describe('Daemon init wiring', () => {
+  it('creates DaemonCore with Electron-specific config after init()', async () => {
+    // Create a fresh Daemon instance — init() calls createElectronAppPaths + createSecretsBackend
     const daemon = new Daemon({ pollIntervalMs: 50 })
+    daemon.init()
 
     const { createElectronAppPaths } = await import('../../core/app-paths')
     const { createSecretsBackend } = await import('../../core/secrets-backend')
 
-    // The Daemon constructor should have called these
+    // init() should have called these
     expect(createElectronAppPaths).toHaveBeenCalled()
     expect(createSecretsBackend).toHaveBeenCalledWith({
       preferElectronSafeStorage: true,
