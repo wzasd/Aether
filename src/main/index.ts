@@ -85,8 +85,13 @@ app.whenReady().then(() => {
   })
 })
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
   logger.info('All windows closed')
+  try {
+    await daemon.stop()
+  } catch (err) {
+    logger.error('Failed to stop daemon during shutdown', err)
+  }
   closeDatabase()
   if (process.platform !== 'darwin') {
     app.quit()

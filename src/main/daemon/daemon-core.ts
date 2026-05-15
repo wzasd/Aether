@@ -26,6 +26,7 @@ import { getRendererApiServer } from './renderer-api'
 import { sseBroadcaster } from './sse-broadcaster'
 import type { AppPaths } from '../core/app-paths'
 import type { SecretsBackend } from '../core/secrets-backend'
+import { getDb } from '../core/db'
 
 export interface DaemonCoreConfig {
   /** Resolved filesystem paths (replaces app.getPath calls) */
@@ -251,6 +252,13 @@ export class DaemonCore {
   private async pollTasks(): Promise<void> {
     if (!this.running || !this.abortController) return
     if (this.abortController.signal.aborted) return
+
+    // Guard: skip polling if DB is not available (e.g. during shutdown)
+    try {
+      getDb()
+    } catch {
+      return
+    }
 
     let anyTaskExecuted = false
 

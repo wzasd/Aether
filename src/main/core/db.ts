@@ -51,6 +51,7 @@ export function closeDatabase(): void {
   if (db?.open) {
     db.close()
   }
+  db = undefined as unknown as Database.Database
 }
 
 function createTables(): void {

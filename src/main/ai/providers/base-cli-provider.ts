@@ -22,6 +22,9 @@ type SessionEntry = {
   buffer: string
   stderr: string
   doneEmitted: boolean
+  /** True if the process was intentionally killed (e.g. abort or app shutdown).
+   *  Prevents SIGTERM from being logged as a crash. */
+  intentionalKill?: boolean
 }
 
 export abstract class BaseCLIProvider extends EventEmitter implements CLIProvider {
@@ -228,6 +231,7 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
       return
     }
 
+    entry.intentionalKill = true
     entry.process?.kill('SIGTERM')
     entry.status = 'idle'
     entry.session.status = 'idle'
@@ -390,18 +394,29 @@ export abstract class BaseCLIProvider extends EventEmitter implements CLIProvide
     child.on('exit', (code, signal) => {
       if (!entry.doneEmitted) {
         const stderr = entry.stderr.trim()
-        const cleanExit = code === 0 && !signal && !stderr
-        if (cleanExit) {
-          const flushEvents = entry.parser.flush()
-          for (const event of flushEvents) {
-            this.emitSessionEvent(session.id, entry, event)
-          }
-          if (!entry.doneEmitted) {
-            this.emitSessionEvent(session.id, entry, { type: 'done', id: session.id })
-          }
+        // Intentional kill (abort/app shutdown) is not a crash
+        if (entry.intentionalKill) {
+          writeObservabilityEvent('runtime:terminated', {
+            profileId: this.config?.profileId,
+            runtimeKey: this.meta.id,
+            sessionId: session.id,
+            reason: 'aborted',
+          })
+          this.emitSessionEvent(session.id, entry, { type: 'done', id: session.id })
         } else {
-          const reason = stderr || `${this.meta.name} process exited unexpectedly (${signal || code || 'unknown'})`
-          this.emitTerminalFailure(session.id, entry, reason)
+          const cleanExit = code === 0 && !signal && !stderr
+          if (cleanExit) {
+            const flushEvents = entry.parser.flush()
+            for (const event of flushEvents) {
+              this.emitSessionEvent(session.id, entry, event)
+            }
+            if (!entry.doneEmitted) {
+              this.emitSessionEvent(session.id, entry, { type: 'done', id: session.id })
+            }
+          } else {
+            const reason = stderr || `${this.meta.name} process exited unexpectedly (${signal || code || 'unknown'})`
+            this.emitTerminalFailure(session.id, entry, reason)
+          }
         }
       }
       this.sessions.delete(session.id)

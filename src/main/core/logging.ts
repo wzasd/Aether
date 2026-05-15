@@ -344,8 +344,8 @@ function isLogLevel(value: unknown): value is LogLevel {
 }
 
 function inferObservabilityLevel(event: ObservabilityEventName, payload: ObservabilityEventPayload): LogLevel {
-  if (event === 'task:failed' || event === 'runtime:binary_not_found') return 'error'
-  if (event === 'permission:abandoned' || event === 'runtime:process_stderr') return 'warn'
+  if (event === 'task:failed') return 'error'
+  if (event === 'runtime:binary_not_found' || event === 'permission:abandoned' || event === 'runtime:process_stderr') return 'warn'
   if (event === 'runtime:terminated') {
     if (payload.reason === 'crashed' || payload.reason === 'zombie') return 'error'
     if (payload.reason === 'aborted' || payload.reason === 'disposed') return 'warn'
