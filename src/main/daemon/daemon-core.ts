@@ -342,6 +342,13 @@ export class DaemonCore {
   }
 
   private heartbeat(): void {
+    // Guard: skip heartbeat if DB is not available (e.g. during shutdown)
+    try {
+      getDb()
+    } catch {
+      return
+    }
+
     const activeRuntimes = runtimeRegistry.getAllActive()
     const totalPending = taskQueue.countAllPending()
 
