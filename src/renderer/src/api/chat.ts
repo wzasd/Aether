@@ -8,17 +8,10 @@
 
 import { apiFetch } from './client'
 import { subscribe } from './events'
+import type { SessionConfig, AIEvent, ConfigOption, AvailableModel } from './types'
 
 function shouldUseHttp(): boolean {
   return window.__BYTRO_USE_HTTP_CHAT__ ?? window.__BYTRO_USE_HTTP__ ?? false
-}
-
-interface SessionConfig {
-  providerType?: string
-  model: string
-  permissionMode: string
-  workingDir: string
-  sessionId?: string
 }
 
 export const chatApi = {
@@ -86,16 +79,16 @@ export const chatApi = {
     return window.api.chat.endSession(sessionId)
   },
 
-  onEvent: (callback: (event: { type: string; [key: string]: unknown }) => void): (() => void) => {
+  onEvent: (callback: (event: AIEvent) => void): (() => void) => {
     if (shouldUseHttp()) {
-      return subscribe('ai:event', (data) => callback(data as { type: string; [key: string]: unknown }))
+      return subscribe('ai:event', (data) => callback(data as AIEvent))
     }
     return window.api.chat.onEvent(callback)
   },
 
-  getAvailableModels: async (sessionId: string): Promise<Array<{ id: string; name: string; contextWindow: number }>> => {
+  getAvailableModels: async (sessionId: string): Promise<AvailableModel[]> => {
     if (shouldUseHttp()) {
-      const res = await apiFetch<{ ok: boolean; data: Array<{ id: string; name: string; contextWindow: number }> }>(
+      const res = await apiFetch<{ ok: boolean; data: AvailableModel[] }>(
         `/api/chat/sessions/${encodeURIComponent(sessionId)}/models`
       )
       return res.data ?? []
@@ -114,9 +107,9 @@ export const chatApi = {
     return window.api.chat.setModel(sessionId, modelId)
   },
 
-  getConfigOptions: async (sessionId: string): Promise<Array<{ id: string; name?: string; label?: string; category?: string; type: string; currentValue?: string; options?: Array<{ value: string; name?: string }> }>> => {
+  getConfigOptions: async (sessionId: string): Promise<ConfigOption[]> => {
     if (shouldUseHttp()) {
-      const res = await apiFetch<{ ok: boolean; data: Array<{ id: string; name?: string; label?: string; category?: string; type: string; currentValue?: string; options?: Array<{ value: string; name?: string }> }> }>(
+      const res = await apiFetch<{ ok: boolean; data: ConfigOption[] }>(
         `/api/chat/sessions/${encodeURIComponent(sessionId)}/config`
       )
       return res.data ?? []

@@ -6,6 +6,7 @@
 
 export { apiFetch, createEventSource, ApiError, setGlobalAuthErrorHandler, setGlobalServerErrorHandler } from './client'
 export { subscribe, getConnectionStatus, onConnectionStatusChange } from './events'
+export type { SessionConfig, AIEvent, ConfigOption, AvailableModel } from './types'
 export { systemApi } from './system'
 export { authApi } from './auth'
 export { conversationApi } from './conversations'

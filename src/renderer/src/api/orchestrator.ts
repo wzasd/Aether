@@ -9,6 +9,7 @@
 
 import { apiFetch } from './client'
 import { subscribe } from './events'
+import type { SessionConfig } from './types'
 
 function shouldUseHttp(): boolean {
   return window.__BYTRO_USE_HTTP_ORCHESTRATOR__ ?? window.__BYTRO_USE_HTTP__ ?? false
@@ -19,7 +20,7 @@ export const orchestratorApi = {
     conversationId: string
     profileId: string | null
     content: string
-    sessionConfig: { providerType?: string; model: string; permissionMode: string; workingDir: string; sessionId?: string }
+    sessionConfig: SessionConfig
     executionMode: 'serial' | 'parallel'
     collaborationMode?: 'orchestrated' | 'open_floor'
     overrides?: { providerType?: string; model?: string }
