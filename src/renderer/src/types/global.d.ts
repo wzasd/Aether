@@ -589,6 +589,7 @@ declare global {
     __BYTRO_USE_HTTP_MEMORY_PALACE__?: boolean
     __BYTRO_USE_HTTP_MCP__?: boolean
     __BYTRO_USE_HTTP_ORCHESTRATOR__?: boolean
+    __BYTRO_USE_HTTP_CHAT__?: boolean
   }
 }
 

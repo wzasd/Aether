@@ -256,7 +256,12 @@ export class DaemonCore {
     // Guard: skip polling if DB is not available (e.g. during shutdown)
     try {
       getDb()
-    } catch {
+    } catch (err) {
+      // Only silently skip for "not initialized" (shutdown scenario).
+      // Log unexpected DB errors for observability.
+      if (!(err instanceof Error && err.message === 'Database has not been initialized')) {
+        console.error('[DaemonCore] unexpected DB error during poll:', err)
+      }
       return
     }
 
@@ -345,7 +350,10 @@ export class DaemonCore {
     // Guard: skip heartbeat if DB is not available (e.g. during shutdown)
     try {
       getDb()
-    } catch {
+    } catch (err) {
+      if (!(err instanceof Error && err.message === 'Database has not been initialized')) {
+        console.error('[DaemonCore] unexpected DB error during heartbeat:', err)
+      }
       return
     }
 
